@@ -1,0 +1,432 @@
+* {
+	box-sizing: border-box;
+	border: none;
+	font-family: "Outfit", sans-serif;
+	margin: 0;
+	outline: none;
+	padding: 0;
+	text-decoration: none;
+	color: inherit;
+}
+
+:root {
+	--primary: #0072ff;
+	--text: #000;
+	--text-muted: #333;
+	--bg: #fff;
+	--surface: #f0f0f0;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--primary: #0072ff;
+		--text: #fff;
+		--text-muted: #f0f0f0;
+		--bg: #000;
+		--surface: #333;
+	}
+}
+
+::-webkit-scrollbar {
+	width: 0;
+	height: 0;
+}
+
+.material-symbols-outlined {
+	align-items: center;
+	display: flex;
+	height: calc(24px * var(--scale)) !important;
+	justify-content: center;
+	overflow: hidden;
+	width: calc(24px * var(--scale)) !important;
+}
+
+b{
+	font-weight: 600;
+}
+
+body {
+	--scale: 1;
+	background: var(--bg);
+	height: calc(360px * var(--scale));
+	width: calc(320px * var(--scale));
+}
+
+header,
+footer {
+	align-items: center;
+	display: flex;
+	height: calc(48px * var(--scale));
+	gap: calc(8px * var(--scale));
+	justify-content: center;
+	padding: 0 calc(8px * var(--scale));
+}
+
+header a {
+	--border: var(--surface);
+	align-items: center;
+	border-bottom: calc(4px * var(--scale)) solid var(--border);
+	border-top: calc(4px * var(--scale)) solid transparent;
+	color: var(--text-muted);
+	cursor: pointer;
+	display: flex;
+	flex: 1;
+	font-size: calc(16px * var(--scale));
+	font-weight: 500;
+	height: calc(48px * var(--scale));
+	justify-content: center;
+	position: relative;
+}
+
+header a span {
+	align-items: center;
+	background: var(--primary);
+	border-radius: calc(16px * var(--scale));
+	color: var(--text);
+	display: flex;
+	font-size: calc(8px * var(--scale));
+	font-weight: 300;
+	justify-content: center;
+	padding: calc(2px * var(--scale)) calc(8px * var(--scale));
+	position: absolute;
+	top: calc(4px * var(--scale));
+	right: calc(4px * var(--scale));
+}
+
+header a.active {
+	--border: var(--primary);
+	color: var(--text);
+}
+
+header a:hover:not(.active) {
+	background: var(--surface);
+}
+
+main {
+	position: relative;
+}
+
+section {
+	color: var(--text);
+	display: flex;
+	flex-direction: column;
+	gap: calc(8px * var(--scale));
+	height: calc(312px * var(--scale));
+	overflow-y: scroll;
+	padding: calc(8px * var(--scale));
+}
+
+.tile {
+	background: var(--surface);
+	border-radius: calc(4px * var(--scale));
+	display: flex;
+	gap: calc(8px * var(--scale));
+	overflow: hidden;
+	padding: calc(8px * var(--scale));
+	position: relative;
+}
+
+.input {
+	align-items: center;
+	display: flex;
+	flex: 1;
+	height: calc(64px * var(--scale));
+	justify-content: flex-end;
+	position: relative;
+}
+
+.input label {
+	align-items: center;
+	display: flex;
+	font-size: calc(14px * var(--scale));
+	font-weight: 300;
+	justify-content: center;
+	left: calc(8px * var(--scale));
+	letter-spacing: 0;
+	position: absolute;
+	top: 50%;
+	translate: -50% -50%;
+	rotate: -90deg;
+	width: calc(80px * var(--scale));
+}
+
+.input input {
+	align-items: center;
+	background: transparent;
+	color: var(--text);
+	font-size: calc(64px * var(--scale));
+	font-weight: 300;
+	height: calc(64px * var(--scale));
+	text-align: center;
+	width: calc(120px * var(--scale));
+}
+
+.input input:is(:focus-visible, :focus) {
+	color: var(--primary);
+}
+
+.progressBar {
+	background: var(--surface);
+	bottom: calc(4px * var(--scale));
+	border-radius: calc(4px * var(--scale));
+	height: calc(4px * var(--scale));
+	left: calc(4px * var(--scale));
+	position: absolute;
+	width: calc(100% - calc(8px * var(--scale)));
+}
+
+.progress {
+	background: linear-gradient(
+		to right,
+		var(--surface) -10%,
+		var(--primary) 100%
+	);
+	border-radius: calc(4px * var(--scale));
+	height: calc(4px * var(--scale));
+	left: 0;
+	position: absolute;
+	transition: width 0.5s ease-in-out;
+	width: 0%;
+}
+
+.failed {
+	background: linear-gradient(to right, #ff4d4d 0%, var(--surface) 110%);
+	border-radius: calc(4px * var(--scale));
+	height: calc(4px * var(--scale));
+	right: 0;
+	position: absolute;
+	transition: width 0.5s ease-in-out;
+	width: 0%;
+}
+
+.running {
+	animation: loading 1s infinite ease-in-out;
+}
+
+@keyframes loading {
+	0% {
+		width: 0%;
+	}
+	100% {
+		width: 100%;
+	}
+}
+
+.trigger {
+	align-items: center;
+	background: var(--primary);
+	border-radius: calc(4px * var(--scale));
+	color: var(--bg);
+	cursor: pointer;
+	display: flex;
+	font-size: calc(16px * var(--scale));
+	font-weight: 700;
+	height: calc(36px * var(--scale));
+	justify-content: center;
+	padding: calc(8px * var(--scale));
+	text-align: center;
+	width: 100%;
+}
+
+.mode {
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+	gap: calc(8px * var(--scale));
+	justify-content: center;
+}
+
+.mode a {
+	align-items: center;
+	background: var(--surface);
+	border-radius: calc(4px * var(--scale));
+	cursor: pointer;
+	display: flex;
+	font-size: calc(14px * var(--scale));
+	font-weight: 500;
+	height: calc(34px * var(--scale));
+	justify-content: center;
+	width: calc(50% - calc(4px * var(--scale)));
+}
+
+.mode a.active {
+	background: var(--primary);
+	color: var(--bg);
+}
+
+.mode a:hover:not(.active) {
+	color: var(--primary);
+}
+
+.menuItem {
+	align-items: center;
+	background: var(--surface);
+	border-radius: calc(4px * var(--scale));
+	cursor: pointer;
+	display: flex;
+	font-size: calc(14px * var(--scale));
+	font-weight: 500;
+	height: calc(48px * var(--scale));
+	justify-content: space-between;
+	padding: calc(8px * var(--scale));
+	position: relative;
+}
+
+.menuItem a {
+	align-items: center;
+	border-radius: calc(4px * var(--scale));
+	cursor: pointer;
+	display: flex;
+	height: calc(32px * var(--scale));
+	justify-content: center;
+	width: calc(32px * var(--scale));
+}
+
+.menuItem a:hover {
+	color: var(--primary);
+}
+
+.menuItem input {
+	background: var(--bg);
+	border-radius: calc(4px * var(--scale));
+	color: var(--text);
+	cursor: text;
+	font-size: calc(14px * var(--scale));
+	height: calc(32px * var(--scale));
+	padding: calc(4px * var(--scale)) calc(8px * var(--scale));
+}
+
+.menuItem input[type="checkbox"] {
+	accent-color: var(--primary);
+	cursor: pointer;
+	height: calc(20px * var(--scale));
+	margin: calc(4px * var(--scale)) calc(4px * var(--scale));
+	width: calc(20px * var(--scale));
+}
+
+.menuItem select {
+	accent-color: var(--primary);
+	align-items: center;
+	background: var(--bg);
+	border-radius: calc(4px * var(--scale));
+	color: var(--text);
+	cursor: pointer;
+	display: flex;
+	font-size: calc(14px * var(--scale));
+	font-weight: 500;
+	height: calc(32px * var(--scale));
+	justify-content: center;
+	padding: calc(4px * var(--scale));
+	vertical-align: middle;
+}
+
+.menuItem button {
+	align-items: center;
+	background: var(--bg);
+	border-radius: calc(4px * var(--scale));
+	color: var(--text);
+	cursor: pointer;
+	display: flex;
+	font-size: calc(14px * var(--scale));
+	font-weight: 500;
+	height: calc(32px * var(--scale));
+	justify-content: center;
+	padding: calc(4px * var(--scale)) calc(16px * var(--scale));
+}
+
+.noConsent,
+.noPro {
+	background: var(--surface);
+	color: var(--text-muted);
+	cursor: not-allowed;
+	pointer-events: none;
+	opacity: 0.75;
+}
+
+#consentForm {
+	background: var(--bg);
+	left: 0;
+	overflow-y: scroll;
+	/* position: absolute; */
+	text-align: justify;
+	/* top: 0; */
+}
+
+#consentForm h2 {
+	color: var(--text);
+	font-size: calc(16px * var(--scale));
+	font-weight: 700;
+	margin-bottom: calc(8px * var(--scale));
+}
+
+#consentForm p {
+	color: var(--text);
+	font-size: calc(14px * var(--scale));
+	line-height: calc(20px * var(--scale));
+	margin-bottom: calc(8px * var(--scale));
+}
+
+#consentForm ul {
+	color: var(--text);
+	font-size: calc(14px * var(--scale));
+	font-weight: 300;
+	line-height: calc(20px * var(--scale));
+	margin-bottom: calc(8px * var(--scale));
+}
+
+#consentForm a {
+	color: var(--primary);
+	cursor: pointer;
+	font-size: calc(14px * var(--scale));
+	font-weight: 500;
+	text-decoration: underline;
+}
+
+footer {
+	align-items: center;
+	color: var(--text);
+	display: flex;
+	justify-content: center;
+}
+
+footer #promo {
+	align-items: center;
+	animation: blink 2s infinite;
+	display: flex;
+	font-size: calc(16px * var(--scale));
+	gap: calc(4px * var(--scale));
+	justify-content: center;
+}
+
+@keyframes blink {
+	0% {
+		color: var(--text);
+	}
+	50% {
+		color: var(--primary);
+	}
+	100% {
+		color: var(--text);
+	}
+}
+
+#rating {
+	align-items: center;
+	display: flex;
+	font-size: calc(16px * var(--scale));
+	font-weight: 500;
+	gap: calc(4px * var(--scale));
+	justify-content: center;
+}
+
+#rating:hover span {
+	color: var(--primary);
+}
+
+#rating span {
+	cursor: pointer;
+}
+
+#rating span:hover ~ span {
+	color: var(--text);
+}
