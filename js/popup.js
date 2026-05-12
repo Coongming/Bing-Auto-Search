@@ -14,8 +14,8 @@ let config = {
 		max: 30, // Increased default
 	},
 	schedule: {
-		desk: 50,
-		mob: 30,
+		desk: 31,
+		mob: 21,
 		min: 15,
 		max: 30,
 		mode: "m1", // Start with m1 for auto-run every ~5 minutes
@@ -164,7 +164,7 @@ function compare() {
 		m1: { desk: 1, mob: 0 },
 		m2: { desk: 11, mob: 0 },
 		m3: { desk: 31, mob: 21 },
-		m4: { desk: 50, mob: 30 },
+		m4: { desk: 0, mob: 0 },
 	};
 	for (const [id, val] of Object.entries(modeMap)) {
 		if (desk === val.desk && mob === val.mob) {
@@ -446,9 +446,9 @@ $(document).ready(async function () {
 		const mode = $(this).attr("class");
 		const modeMap = {
 			m1: { desk: 1, mob: 0 },
-			m2: { desk: 11, mob: 0 },
-			m3: { desk: 31, mob: 21 },
-			m4: { desk: 50, mob: 50 },
+			m2: { desk: 0, mob: 1 },
+			m3: { desk: 0, mob: 21 },
+			m4: { desk: 0, mob: 0 },
 		};
 		if (modeMap[mode]) {
 			config.search.desk = modeMap[mode].desk;
@@ -531,7 +531,7 @@ $(document).ready(async function () {
 		const modeMap = {
 			m1: { desk: 31, mob: 21 },
 			m2: { desk: 31, mob: 21},
-			m3: { desk: 3,  mob: 2 },
+			m3: { desk: 6,  mob: 4 },
 			m4: { desk: 5,  mob: 3 },
 		};
 		if (modeMap[mode]) {

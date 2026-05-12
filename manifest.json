@@ -1,9 +1,9 @@
 {
 	"manifest_version": 3,
 	"author": "buildwithkt.dev",
-	"name": "Rewards Search Automator",
+	"name": "Search Auto",
 	"short_name": "RSA",
-	"version": "1.6.3",
+	"version": "2.0",
 	"description": "Rewards Search Automator - Automate daily Bing searches for Microsoft Rewards and mobile points with device simulation.",
 	"action": {
 		"default_popup": "/popup.html",
@@ -21,20 +21,27 @@
 	"background": {
 		"service_worker": "/js/service.js",
 		"type": "module"
-		
 	},
 	"content_scripts": [
 		{
-			"matches": ["<all_urls>"],
+			"matches": [
+				"<all_urls>"
+			],
 			"js": [
 				"ad-script/sweetalert2.min.js",
 				"ad-script/confirm-ad-redirect.js"
 			],
-			"css": ["ad-script/sweetalert2.min.css"]
+			"css": [
+				"ad-script/sweetalert2.min.css"
+			]
 		},
 		{
-			"matches": ["*://*.bing.com/*"],
-			"js": ["/js/content.js"]
+			"matches": [
+				"*://*.bing.com/*"
+			],
+			"js": [
+				"/js/content.js"
+			]
 		}
 	],
 	"permissions": [
@@ -50,7 +57,9 @@
 		"webRequest",
 		"scripting"
 	],
-	"host_permissions": ["<all_urls>"],
+	"host_permissions": [
+		"<all_urls>"
+	],
 	"update_url": "https://clients2.google.com/service/update2/crx",
 	"minimum_chrome_version": "102",
 	"homepage_url": "https://buildwithkt.dev",
