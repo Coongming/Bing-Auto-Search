@@ -7,13 +7,8 @@ const rewardsFlyout =
 	"https://www.bing.com/rewards/panelflyout?channel=bingflyout&partnerId=BingRewards&ru=";
 const loading = "/loading.html?type=";
 const homepage = "https://buildwithkt.dev/";
-// Helper function to check pro status
-const hasProAccess = () => true; // Always return true for unlimited access
-// Helper function to check consent status
-const hasConsent = () => true; // Always return true - terms automatically accepted
-//Todo: add once site is live - const tnc = "https://tnc.buildwithkt.dev/rewards-search-automator/";
-//const tnc =
-	//"https://getprojects.notion.site/Privacy-Policy-Rewards-Search-Automator-1986977bedc08080a1d2e3a70dcb29e5";
+const hasProAccess = () => true;
+const hasConsent = () => true;
 const msDomains = [
 	"bing.com",
 	"microsoft.com",
@@ -30,17 +25,17 @@ const msDomains = [
 ];
 let config = {
 	search: {
-		desk: 1, // Increased default
-		mob: 0, // Increased default
+		desk: 1,
+		mob: 0,
 		min: 15,
-		max: 30, // Increased default
+		max: 30,
 	},
 	schedule: {
 		desk: 10,
 		mob: 10,
 		min: 15,
 		max: 30,
-		mode: "m1", // Start with m1 for auto-run every ~5 minutes
+		mode: "m1",
 	},
 	device: {
 		name: "",
@@ -51,9 +46,9 @@ let config = {
 	},
 	control: {
 		niche: "random",
-		consent: 1, // Auto-accept terms
+		consent: 1,
 		clear: 1,
-		act: 1, // Auto-enable activities
+		act: 1,
 		log: 0,
 	},
 	runtime: {
@@ -542,13 +537,8 @@ async function clear(interruptible = true) {
 	return true;
 }
 
-// WATCHER
 (async function () {
-	logs &&
-		log(
-			`[WATCHER] - Watching tabs for MS domain navigations except RSA tab.`,
-			"update",
-		);
+	logs && log(`[WATCHER] - Watching tabs for MS domain navigations except RSA tab.`, "update");
 	const handleNavigation = ({ tabId, frameId, url }) => {
 		tabId = Number(tabId);
 		frameId = Number(frameId);
@@ -567,11 +557,7 @@ async function clear(interruptible = true) {
 			!config?.runtime?.act
 		) {
 			needPatch = true;
-			logs &&
-				log(
-					`[WATCHER] - (Patch Required) MS domain navigation detected in tab ${tabId}: ${url}`,
-					"warning",
-				);
+			logs && log(`[WATCHER] - (Patch Required) MS domain navigation detected in tab ${tabId}: ${url}`, "warning");
 		}
 	};
 	chrome.webNavigation.onCommitted.addListener(handleNavigation);
@@ -3132,44 +3118,7 @@ chrome.runtime.onStartup.addListener(() => {
     });
 });
 
-// // chrome.runtime.onInstalled.addListener(async (details) => {
-// // 	if (details.reason === "install") {
-// // 		log(`[INSTALL] - Extension installed.`, "update");
-// // 		await chrome.tabs.create({
-// // 			url: tnc,
-// // 			active: true,
-// // 		});
-// // 		await enableStats();
-// // 	}
-// // 	//if (details.reason === "update") {
-// // 		log(
-// // 			`[UPDATE] - Extension updated to version ${
-// // 				chrome.runtime.getManifest().version
-// // 			}.`,
-// // 			"update",
-// // 		);
-// // 		// TODO: Check perms and set alert if not enough
-// // 		//await enableStats();
-// // 		//await chrome.tabs.create({
-// // 			//url: tnc,
-// // 			//active: true,
-// // 		});
-// 		const stored = await get();
-// 		if (stored) {
-// 			Object.assign(config, stored);
-// 		}
-// 		if ((hasConsent() || config?.control?.consent) && config?.pro?.key) {
-// 			await reverify();
-// 		}
-// 		config.runtime.act = 0;
-// 		config.runtime.running = 0;
-// 		// Don't reset consent - keep it enabled
-// 		if (!config.control.consent && hasConsent()) {
-// 			config.control.consent = 1;
-// 		}
-// 		await set(config);
-// 	}
-// });
+
 
 chrome.permissions.onAdded.addListener(async () => {
 	await enableStats();
