@@ -18,7 +18,7 @@ let config = {
 		mob: 21,
 		min: 15,
 		max: 30,
-		mode: "m1", // Start with m1 for auto-run every ~5 minutes
+		mode: "m1",
 	},
 	device: {
 		name: "",
@@ -51,7 +51,7 @@ let config = {
 		city: "",
 	},
 	pro: {
-		key: "", // Will be auto-generated when needed
+		key: "",
 		seats: 0,
 	},
 };
@@ -215,7 +215,7 @@ async function updateUI() {
 	for (const [key, limits] of Object.entries(limitsMap)) {
 		const $el = $(`#${key}`);
 		$el.attr("min", limits.min);
-		$el.attr("max", limits.max[1]); // Always use Pro limits
+		$el.attr("max", limits.max[1]);
 	}
 	$searchDesk.val(config.search.desk);
 	$searchMob.val(config.search.mob);
@@ -344,7 +344,7 @@ $(document).ready(async function () {
 	if (uuid?.user_stat_uuid) {
 		$uuid.val(uuid.user_stat_uuid || "");
 	}
-	// onclick copy to clipboard
+
 	$uuid.on("click", function () {
 		const $this = $(this);
 		$this.select();
@@ -394,7 +394,7 @@ $(document).ready(async function () {
 	}
 	$searchDesk.on("change", async function () {
 		const { min, max } = limitsMap.searchDesk;
-		const maxVal = max[1]; // Always use Pro limits
+		const maxVal = max[1];
 		let val = Number($(this).val());
 		if (isNaN(val)) val = min;
 		else val = Math.max(min, Math.min(maxVal, val));

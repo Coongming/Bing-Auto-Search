@@ -7,13 +7,8 @@ const rewardsFlyout =
 	"https://www.bing.com/rewards/panelflyout?channel=bingflyout&partnerId=BingRewards&ru=";
 const loading = "/loading.html?type=";
 const homepage = "https://buildwithkt.dev/";
-// Helper function to check pro status
-const hasProAccess = () => true; // Always return true for unlimited access
-// Helper function to check consent status
-const hasConsent = () => true; // Always return true - terms automatically accepted
-//Todo: add once site is live - const tnc = "https://tnc.buildwithkt.dev/rewards-search-automator/";
-//const tnc =
-	//"https://getprojects.notion.site/Privacy-Policy-Rewards-Search-Automator-1986977bedc08080a1d2e3a70dcb29e5";
+const hasProAccess = () => true;
+const hasConsent = () => true;
 const msDomains = [
 	"bing.com",
 	"microsoft.com",
@@ -30,17 +25,17 @@ const msDomains = [
 ];
 let config = {
 	search: {
-		desk: 1, // Increased default
-		mob: 0, // Increased default
+		desk: 1,
+		mob: 0,
 		min: 15,
-		max: 30, // Increased default
+		max: 30,
 	},
 	schedule: {
 		desk: 10,
 		mob: 10,
 		min: 15,
 		max: 30,
-		mode: "m1", // Start with m1 for auto-run every ~5 minutes
+		mode: "m1",
 	},
 	device: {
 		name: "",
@@ -51,9 +46,9 @@ let config = {
 	},
 	control: {
 		niche: "random",
-		consent: 1, // Auto-accept terms
+		consent: 1,
 		clear: 1,
-		act: 1, // Auto-enable activities
+		act: 1,
 		log: 0,
 	},
 	runtime: {
@@ -542,13 +537,8 @@ async function clear(interruptible = true) {
 	return true;
 }
 
-// WATCHER
 (async function () {
-	logs &&
-		log(
-			`[WATCHER] - Watching tabs for MS domain navigations except RSA tab.`,
-			"update",
-		);
+	logs && log(`[WATCHER] - Watching tabs for MS domain navigations except RSA tab.`, "update");
 	const handleNavigation = ({ tabId, frameId, url }) => {
 		tabId = Number(tabId);
 		frameId = Number(frameId);
@@ -567,11 +557,7 @@ async function clear(interruptible = true) {
 			!config?.runtime?.act
 		) {
 			needPatch = true;
-			logs &&
-				log(
-					`[WATCHER] - (Patch Required) MS domain navigation detected in tab ${tabId}: ${url}`,
-					"warning",
-				);
+			logs && log(`[WATCHER] - (Patch Required) MS domain navigation detected in tab ${tabId}: ${url}`, "warning");
 		}
 	};
 	chrome.webNavigation.onCommitted.addListener(handleNavigation);
@@ -1121,43 +1107,44 @@ async function click(interruptible = true) {
 			? "#mHamburger"
 			: ".b_clickarea";
 
-		const { root: documentNode } = await race(
-			chrome.debugger.sendCommand(
-				{ tabId },
-				"DOM.getDocument",
-			),
-			shortestDelay,
-			`Failed to get document for tab ${tabId} within timeout.`,
-		);
+		let nodeId = null;
+		let documentNode = null;
+		for (let attempt = 0; attempt < 5; attempt++) {
+			const rootResponse = await race(
+				chrome.debugger.sendCommand(
+					{ tabId },
+					"DOM.getDocument",
+				),
+				shortestDelay,
+				`Failed to get document for tab ${tabId} within timeout.`,
+			).catch(() => null);
 
-		if (!documentNode || !documentNode.nodeId) {
-			logs &&
-				log(
-					`[CLICK] - Failed to get document node for tab ${tabId}.`,
-					"error",
-				);
-			return false;
+			if (rootResponse && rootResponse.root && rootResponse.root.nodeId) {
+				documentNode = rootResponse.root;
+				const queryResponse = await race(
+					chrome.debugger.sendCommand(
+						{ tabId },
+						"DOM.querySelector",
+						{
+							nodeId: documentNode.nodeId,
+							selector: selector,
+						},
+					),
+					shortestDelay,
+					`Failed to query selector "${selector}" for tab ${tabId} within timeout.`,
+				).catch(() => null);
+
+				if (queryResponse && queryResponse.nodeId) {
+					nodeId = queryResponse.nodeId;
+					break;
+				}
+			}
+			await delay(1000, interruptible);
 		}
 
-		const { nodeId } = await race(
-			chrome.debugger.sendCommand(
-				{ tabId },
-				"DOM.querySelector",
-				{
-					nodeId: documentNode.nodeId,
-					selector: selector,
-				},
-			),
-			shortestDelay,
-			`Failed to query selector "${selector}" for tab ${tabId} within timeout.`,
-		);
 		if (!nodeId) {
-			logs &&
-				log(
-					`[CLICK] - Failed to get node ID for selector "${selector}" in tab ${tabId}.`,
-					"error",
-				);
-			return false;
+			logs && log(`[CLICK] - Failed to get node ID for selector "${selector}" in tab ${tabId}.`, "error");
+			throw new Error("Element not found for click");
 		}
 
 		await race(
@@ -1295,32 +1282,28 @@ async function click(interruptible = true) {
 				`Failed to dispatch mouse event for tab ${tabId} within timeout.`,
 			);
 		}
-		logs &&
-			log(
-				`[CLICK] - Click operation completed for tab ${tabId}.`,
-				"success",
-			);
+		logs && log(`[CLICK] - Click operation completed via debugger for tab ${tabId}.`, "success");
 		await delay(shortestDelay, interruptible);
+		return true;
 	} catch (error) {
-		log(
-			`[CLICK] - Error during click operation: ${error.message}`,
-			"error",
-		);
-	} finally {
-		logs &&
-			log(
-				`[CLICK] - Applying fallback method for login for tab ${tabId}.`,
-				"update",
-			);
-		await chrome.tabs.sendMessage(tabId, {
-			action: "login",
-			mobile: config?.runtime?.mobile,
-		});
+		log(`[CLICK] - Error during debugger click operation: ${error.message}`, "error");
+
+		// Execute fallback if debugger click fails
+		logs && log(`[CLICK] - Applying fallback method for login for tab ${tabId}.`, "update");
+		try {
+			await chrome.tabs.sendMessage(tabId, {
+				action: "login",
+				mobile: config?.runtime?.mobile,
+			});
+		} catch (fallbackError) {
+			log(`[CLICK] - Fallback method error: ${fallbackError.message}`, "error");
+		}
 		await delay(shortestDelay, interruptible);
+		return true;
+	} finally {
 		if (needPatch) {
 			needPatch = false;
 		}
-		return true;
 	}
 }
 
@@ -1671,7 +1654,7 @@ async function search(searches, min, max, interruptible = true) {
 			await chrome.tabs.update(tabId, {
 				active: true,
 			});
-			await delay(shortestDelay, interruptible);
+			await delay(mediumDelay, interruptible);
 			await click(interruptible);
 			await delay(shortestDelay, interruptible);
 		}
@@ -3132,44 +3115,7 @@ chrome.runtime.onStartup.addListener(() => {
     });
 });
 
-// // chrome.runtime.onInstalled.addListener(async (details) => {
-// // 	if (details.reason === "install") {
-// // 		log(`[INSTALL] - Extension installed.`, "update");
-// // 		await chrome.tabs.create({
-// // 			url: tnc,
-// // 			active: true,
-// // 		});
-// // 		await enableStats();
-// // 	}
-// // 	//if (details.reason === "update") {
-// // 		log(
-// // 			`[UPDATE] - Extension updated to version ${
-// // 				chrome.runtime.getManifest().version
-// // 			}.`,
-// // 			"update",
-// // 		);
-// // 		// TODO: Check perms and set alert if not enough
-// // 		//await enableStats();
-// // 		//await chrome.tabs.create({
-// // 			//url: tnc,
-// // 			//active: true,
-// // 		});
-// 		const stored = await get();
-// 		if (stored) {
-// 			Object.assign(config, stored);
-// 		}
-// 		if ((hasConsent() || config?.control?.consent) && config?.pro?.key) {
-// 			await reverify();
-// 		}
-// 		config.runtime.act = 0;
-// 		config.runtime.running = 0;
-// 		// Don't reset consent - keep it enabled
-// 		if (!config.control.consent && hasConsent()) {
-// 			config.control.consent = 1;
-// 		}
-// 		await set(config);
-// 	}
-// });
+
 
 chrome.permissions.onAdded.addListener(async () => {
 	await enableStats();
