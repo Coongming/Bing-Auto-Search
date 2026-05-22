@@ -1107,43 +1107,44 @@ async function click(interruptible = true) {
 			? "#mHamburger"
 			: ".b_clickarea";
 
-		const { root: documentNode } = await race(
-			chrome.debugger.sendCommand(
-				{ tabId },
-				"DOM.getDocument",
-			),
-			shortestDelay,
-			`Failed to get document for tab ${tabId} within timeout.`,
-		);
+		let nodeId = null;
+		let documentNode = null;
+		for (let attempt = 0; attempt < 5; attempt++) {
+			const rootResponse = await race(
+				chrome.debugger.sendCommand(
+					{ tabId },
+					"DOM.getDocument",
+				),
+				shortestDelay,
+				`Failed to get document for tab ${tabId} within timeout.`,
+			).catch(() => null);
 
-		if (!documentNode || !documentNode.nodeId) {
-			logs &&
-				log(
-					`[CLICK] - Failed to get document node for tab ${tabId}.`,
-					"error",
-				);
-			return false;
+			if (rootResponse && rootResponse.root && rootResponse.root.nodeId) {
+				documentNode = rootResponse.root;
+				const queryResponse = await race(
+					chrome.debugger.sendCommand(
+						{ tabId },
+						"DOM.querySelector",
+						{
+							nodeId: documentNode.nodeId,
+							selector: selector,
+						},
+					),
+					shortestDelay,
+					`Failed to query selector "${selector}" for tab ${tabId} within timeout.`,
+				).catch(() => null);
+
+				if (queryResponse && queryResponse.nodeId) {
+					nodeId = queryResponse.nodeId;
+					break;
+				}
+			}
+			await delay(1000, interruptible);
 		}
 
-		const { nodeId } = await race(
-			chrome.debugger.sendCommand(
-				{ tabId },
-				"DOM.querySelector",
-				{
-					nodeId: documentNode.nodeId,
-					selector: selector,
-				},
-			),
-			shortestDelay,
-			`Failed to query selector "${selector}" for tab ${tabId} within timeout.`,
-		);
 		if (!nodeId) {
-			logs &&
-				log(
-					`[CLICK] - Failed to get node ID for selector "${selector}" in tab ${tabId}.`,
-					"error",
-				);
-			return false;
+			logs && log(`[CLICK] - Failed to get node ID for selector "${selector}" in tab ${tabId}.`, "error");
+			throw new Error("Element not found for click");
 		}
 
 		await race(
@@ -1281,32 +1282,28 @@ async function click(interruptible = true) {
 				`Failed to dispatch mouse event for tab ${tabId} within timeout.`,
 			);
 		}
-		logs &&
-			log(
-				`[CLICK] - Click operation completed for tab ${tabId}.`,
-				"success",
-			);
+		logs && log(`[CLICK] - Click operation completed via debugger for tab ${tabId}.`, "success");
 		await delay(shortestDelay, interruptible);
+		return true;
 	} catch (error) {
-		log(
-			`[CLICK] - Error during click operation: ${error.message}`,
-			"error",
-		);
-	} finally {
-		logs &&
-			log(
-				`[CLICK] - Applying fallback method for login for tab ${tabId}.`,
-				"update",
-			);
-		await chrome.tabs.sendMessage(tabId, {
-			action: "login",
-			mobile: config?.runtime?.mobile,
-		});
+		log(`[CLICK] - Error during debugger click operation: ${error.message}`, "error");
+
+		// Execute fallback if debugger click fails
+		logs && log(`[CLICK] - Applying fallback method for login for tab ${tabId}.`, "update");
+		try {
+			await chrome.tabs.sendMessage(tabId, {
+				action: "login",
+				mobile: config?.runtime?.mobile,
+			});
+		} catch (fallbackError) {
+			log(`[CLICK] - Fallback method error: ${fallbackError.message}`, "error");
+		}
 		await delay(shortestDelay, interruptible);
+		return true;
+	} finally {
 		if (needPatch) {
 			needPatch = false;
 		}
-		return true;
 	}
 }
 
@@ -1657,7 +1654,7 @@ async function search(searches, min, max, interruptible = true) {
 			await chrome.tabs.update(tabId, {
 				active: true,
 			});
-			await delay(shortestDelay, interruptible);
+			await delay(mediumDelay, interruptible);
 			await click(interruptible);
 			await delay(shortestDelay, interruptible);
 		}
