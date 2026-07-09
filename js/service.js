@@ -47,7 +47,7 @@ let config = {
 	control: {
 		niche: "random",
 		consent: 1,
-		clear: 1,
+		clear: 0,
 		act: 1,
 		log: 0,
 	},
@@ -70,9 +70,9 @@ let config = {
 let logs = config?.control?.log;
 let needPatch = false;
 let searchQuery = "";
-let shortestDelay = 1000;
-let mediumDelay = 3000;
-let longestDelay = 5000;
+let shortestDelay = 500;
+let mediumDelay = 1500;
+let longestDelay = 2500;
 let alive;
 
 const activityMemoryKey = "activityMemory";
@@ -349,10 +349,9 @@ async function delay(ms, interruptible = true) {
 	if (ms > 1000) {
 		logs &&
 			log(
-				`[DELAY] Waiting for ${ms}ms... (${
-					interruptible
-						? "interruptible"
-						: "non-interruptible"
+				`[DELAY] Waiting for ${ms}ms... (${interruptible
+					? "interruptible"
+					: "non-interruptible"
 				})`,
 			);
 	}
@@ -383,9 +382,8 @@ async function delay(ms, interruptible = true) {
 				if (ms > 1000) {
 					logs &&
 						log(
-							`[DELAY] Interrupted in ${
-								Date.now() -
-								startTime
+							`[DELAY] Interrupted in ${Date.now() -
+							startTime
 							}ms.`,
 							"warning",
 						);
@@ -440,10 +438,8 @@ async function wait(tabId) {
 			chrome.tabs.onUpdated.removeListener(onUpdated);
 			logs &&
 				log(
-					`[WAIT] ${message} (Took ${
-						Date.now() - startTime
-					}ms) - ${
-						success ? "Success" : "Failed"
+					`[WAIT] ${message} (Took ${Date.now() - startTime
+					}ms) - ${success ? "Success" : "Failed"
 					}`,
 				);
 			resolve(success);
@@ -1335,7 +1331,7 @@ async function query(interruptible = true) {
 	if (niche === "random") {
 		niche =
 			categories[
-				Math.floor(Math.random() * categories.length)
+			Math.floor(Math.random() * categories.length)
 			];
 	}
 	let queryList = queries[niche];
@@ -1611,10 +1607,12 @@ async function search(searches, min, max, interruptible = true) {
 			);
 	}
 	alive = setInterval(async () => {
-		await chrome.tabs.sendMessage(tabId, {
-			action: "ping",
-		});
-		await chrome.tabs.update(tabId, { highlighted: true });
+		try {
+			await chrome.tabs.sendMessage(tabId, {
+				action: "ping",
+			});
+			await chrome.tabs.update(tabId, { highlighted: true });
+		} catch (e) { }
 	}, longestDelay);
 
 	for (let i = 0; i < searches; i++) {
@@ -1681,8 +1679,7 @@ async function search(searches, min, max, interruptible = true) {
 			config.runtime.failed++;
 			logs &&
 				log(
-					`[SEARCH] Search ${
-						i + 1
+					`[SEARCH] Search ${i + 1
 					} failed with query: ${searchQuery}.`,
 					"error",
 				);
@@ -1690,8 +1687,7 @@ async function search(searches, min, max, interruptible = true) {
 			config.runtime.done++;
 			logs &&
 				log(
-					`[SEARCH] Search ${
-						i + 1
+					`[SEARCH] Search ${i + 1
 					} performed with query: ${searchQuery}.`,
 					"success",
 				);
@@ -1703,7 +1699,7 @@ async function search(searches, min, max, interruptible = true) {
 					((config.runtime.done +
 						config.runtime.failed) /
 						config.runtime.total) *
-						100,
+					100,
 				) + "%",
 		});
 		if (i === searches - 1) {
@@ -1757,7 +1753,7 @@ async function waitForUrl(tabId, predicate, timeout = longestDelay * 2) {
 				if (predicate(url || "")) {
 					done(true, url);
 				}
-			} catch (error) {}
+			} catch (error) { }
 		};
 
 		const onUpdated = (updatedTabId, changeInfo, tab) => {
@@ -2369,11 +2365,11 @@ function isRewardActivityUrl(url) {
 	const value = String(url || "").toLowerCase();
 	return Boolean(
 		value &&
-			!value.startsWith("chrome://") &&
-			!value.startsWith("chrome-extension://") &&
-			!value.startsWith("devtools://") &&
-			(value.includes("rewards") ||
-				msDomains.some((domain) => value.includes(domain))),
+		!value.startsWith("chrome://") &&
+		!value.startsWith("chrome-extension://") &&
+		!value.startsWith("devtools://") &&
+		(value.includes("rewards") ||
+			msDomains.some((domain) => value.includes(domain))),
 	);
 }
 
@@ -2386,12 +2382,12 @@ function isActivityOpenedTab(tab, mainTabId, existingTabIds) {
 	const openedByMainTab = Number(tab.openerTabId) === Number(mainTabId);
 	return Boolean(
 		tab?.id &&
-			tab.id !== mainTabId &&
-			!existingTabIds.has(tab.id) &&
-			(openedByMainTab || isRewardActivityUrl(tabUrl)) &&
-			!tabUrl.startsWith("chrome://") &&
-			!tabUrl.startsWith("chrome-extension://") &&
-			!tabUrl.startsWith("devtools://"),
+		tab.id !== mainTabId &&
+		!existingTabIds.has(tab.id) &&
+		(openedByMainTab || isRewardActivityUrl(tabUrl)) &&
+		!tabUrl.startsWith("chrome://") &&
+		!tabUrl.startsWith("chrome-extension://") &&
+		!tabUrl.startsWith("devtools://"),
 	);
 }
 
@@ -2424,7 +2420,7 @@ async function processOpenedActivityTabs(
 		await delay(shortestDelay, false);
 		try {
 			await chrome.tabs.remove(tab.id);
-		} catch (error) {}
+		} catch (error) { }
 		processed++;
 		logs &&
 			log(
@@ -2461,7 +2457,7 @@ async function closeOpenedActivityTabs(mainTabId, existingTabIds) {
 					`[ACTIVITY] Cleanup closed leftover tab: ${tab.id} (${tab.url || tab.pendingUrl || "unknown url"})`,
 					"update",
 				);
-		} catch (error) {}
+		} catch (error) { }
 	}
 	return closed;
 }
@@ -2685,7 +2681,7 @@ async function activity(tabId, interruptible = true) {
 			await enableDomains(tabId);
 		}
 
-		await chrome.tabs.sendMessage(tabId, { action: "closePopups" }).catch(() => {});
+		await chrome.tabs.sendMessage(tabId, { action: "closePopups" }).catch(() => { });
 		await delay(shortestDelay, interruptible);
 
 		activityMemory = await loadActivityMemory();
@@ -2729,7 +2725,7 @@ async function activity(tabId, interruptible = true) {
 			await delay(mediumDelay, interruptible);
 			await chrome.tabs
 				.sendMessage(tabId, { action: "closePopups" })
-				.catch(() => {});
+				.catch(() => { });
 			idlePasses = 0;
 
 			for (let pass = 1; pass <= 10; pass++) {
@@ -3055,7 +3051,7 @@ async function enableStats() {
 		// add timestamp to avoid caching
 		const response = await fetch(
 			"https://buildwithkt.dev/rsa/config.json?t=" +
-				Date.now(),
+			Date.now(),
 			{ cache: "no-store" },
 		);
 		const data = await response.json();
@@ -3087,32 +3083,32 @@ async function enableStats() {
 })().then();
 
 chrome.runtime.onStartup.addListener(() => {
-    if (chrome && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.remove('stats_initialized_fallback', () => {
-            // optional: console.log('Cleared stats_initialized_fallback on startup');
-        });
-    }
+	if (chrome && chrome.storage && chrome.storage.local) {
+		chrome.storage.local.remove('stats_initialized_fallback', () => {
+			// optional: console.log('Cleared stats_initialized_fallback on startup');
+		});
+	}
 });
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 chrome.runtime.onStartup.addListener(() => {
-    // Import stats module so its initOncePerDay logic chạy
-    import(chrome.runtime.getURL('/js/stats.js'))
-        .catch(err => {
-            console.warn('Failed to import stats on startup:', err);
-        });
+	// Import stats module so its initOncePerDay logic chạy
+	import(chrome.runtime.getURL('/js/stats.js'))
+		.catch(err => {
+			console.warn('Failed to import stats on startup:', err);
+		});
 });
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 chrome.runtime.onInstalled.addListener(() => {
-    // thay 'mobile_points_enabled' bằng key thực tế nếu khác
-    chrome.storage.local.set({ mobile_points_enabled: true });
+	// thay 'mobile_points_enabled' bằng key thực tế nếu khác
+	chrome.storage.local.set({ mobile_points_enabled: true });
 });
 chrome.runtime.onStartup.addListener(() => {
-    chrome.storage.local.get('mobile_points_enabled', (res) => {
-        if (!res || !res.mobile_points_enabled) {
-            chrome.storage.local.set({ mobile_points_enabled: true });
-        }
-    });
+	chrome.storage.local.get('mobile_points_enabled', (res) => {
+		if (!res || !res.mobile_points_enabled) {
+			chrome.storage.local.set({ mobile_points_enabled: true });
+		}
+	});
 });
 
 

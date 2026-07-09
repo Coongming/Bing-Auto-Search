@@ -86,10 +86,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 							input.value += char;
 							await delay(
 								50 +
-									Math.floor(
-										Math.random() *
-											50,
-									),
+								Math.floor(
+									Math.random() *
+									50,
+								),
 								true,
 							);
 						}
@@ -173,14 +173,14 @@ let config = {
 	search: {
 		desk: 10,
 		mob: 0,
-		min: 15,
-		max: 30,
+		min: 10,
+		max: 20,
 	},
 	schedule: {
 		desk: 0,
 		mob: 0,
-		min: 15,
-		max: 30,
+		min: 10,
+		max: 20,
 		mode: "m1",
 	},
 	device: {

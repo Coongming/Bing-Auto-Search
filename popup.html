@@ -1,276 +1,133 @@
 <!DOCTYPE html>
 <html lang="en">
-	<head>
-		<meta charset="UTF-8" />
-		<meta
-			name="viewport"
-			content="width=device-width, initial-scale=1.0" />
-		<title>Rewards Search Automator</title>
-		<link
-			rel="shortcut icon"
-			href="/logo/bing.png"
-			type="image/x-icon" />
-		<link rel="stylesheet" href="/css/popup.css" />
-		<link rel="preconnect" href="https://fonts.googleapis.com" />
-		<link
-			rel="preconnect"
-			href="https://fonts.gstatic.com"
-			crossorigin />
-		<link
-			href="https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap"
-			rel="stylesheet" />
-		<link
-			rel="stylesheet"
-			href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
-		<script src="/js/helper.js"></script>
-	</head>
-	<body>
-		<header>
-			<a
-				class="nav"
-				title="Search options (Free)"
-				data-open="search"
-				>Search <span>Free</span></a
-			>
-			<a
-				class="nav"
-				title="Schedule options (Pro)"
-				data-open="schedule"
-				>Schedule <span>Pro</span></a
-			>
-			<a class="nav" title="Settings" data-open="settings"
-				>Settings</a
-			>
-		</header>
-		<main>
-			<section id="search">
-				<div class="tile">
-					<div class="input">
-						<label for="searchDesk"
-							>Desktop</label
-						>
-						<input
-							type="number"
-							name="searchDesk"
-							id="searchDesk" />
-					</div>
-					<div class="input">
-						<label for="searchMob"
-							>Mobile</label
-						>
-						<input
-							type="number"
-							name="searchMob"
-							id="searchMob" />
-					</div>
-					<div class="progressBar">
-						<div class="progress"></div>
-						<div class="failed"></div>
-					</div>
+
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Rewards Search Automator</title>
+	<link rel="shortcut icon" href="/logo/bing.png" type="image/x-icon" />
+	<link rel="stylesheet" href="/css/popup.css" />
+	<link rel="preconnect" href="https://fonts.googleapis.com" />
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+	<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap" rel="stylesheet" />
+	<link rel="stylesheet"
+		href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+	<script src="/js/helper.js"></script>
+</head>
+
+<body>
+	<header>
+		<a class="nav" title="Search options (Free)" data-open="search">Search <span>Free</span></a>
+		<a class="nav" title="Schedule options (Pro)" data-open="schedule">Schedule <span>Pro</span></a>
+		<a class="nav" title="Settings" data-open="settings">Settings</a>
+	</header>
+	<main>
+		<section id="search">
+			<div class="tile">
+				<div class="input">
+					<label for="searchDesk">Desktop</label>
+					<input type="number" name="searchDesk" id="searchDesk" />
 				</div>
-				<div class="tile">
-					<div class="input">
-						<label for="searchMin"
-							>Min. Delay</label
-						>
-						<input
-							type="number"
-							name="searchMin"
-							id="searchMin" />
-					</div>
-					<div class="input">
-						<label for="searchMax"
-							>Max. Delay</label
-						>
-						<input
-							type="number"
-							name="searchMax"
-							id="searchMax" />
-					</div>
+				<div class="input">
+					<label for="searchMob">Mobile</label>
+					<input type="number" name="searchMob" id="searchMob" />
 				</div>
-				<div id="searchMode" class="mode">
-					<a
-						class="m1"
-						title="0 Mobile and 30 PC points"
-						type="button"
-						role="button"
-						>1 - 0</a
-					>
-					<a
-						class="m2"
-						title="30 Mobile and 60 PC points"
-						type="button"
-						role="button"
-						>0 - 1</a
-					>
-					<a
-						class="m3"
-						title="60 Mobile and 90 PC points"
-						type="button"
-						role="button"
-						>0 - 21</a
-					>
-					<a
-						class="m4"
-						title="90 Mobile and 150 PC points"
-						type="button"
-						role="button"
-						>Custom</a
-					>
+				<div class="progressBar">
+					<div class="progress"></div>
+					<div class="failed"></div>
 				</div>
-				<button
-					id="searchTrigger"
-					class="trigger"
-					title="Start/Stop Searches"
-					type="button"
-					role="button">
-					Search
-				</button>
-			</section>
-			<section id="schedule">
-				<div class="tile">
-					<div class="input">
-						<label for="scheduleDesk"
-							>Desktop</label
-						>
-						<input
-							type="number"
-							name="scheduleDesk"
-							id="scheduleDesk" />
-					</div>
-					<div class="input">
-						<label for="scheduleMob"
-							>Mobile</label
-						>
-						<input
-							type="number"
-							name="scheduleMob"
-							id="scheduleMob" />
-					</div>
-					<div class="progressBar">
-						<div class="progress"></div>
-						<div class="failed"></div>
-					</div>
+			</div>
+			<div class="tile">
+				<div class="input">
+					<label for="searchMin">Min. Delay</label>
+					<input type="number" name="searchMin" id="searchMin" />
 				</div>
-				<div class="tile">
-					<div class="input">
-						<label for="scheduleMin"
-							>Min. Delay</label
-						>
-						<input
-							type="number"
-							name="scheduleMin"
-							id="scheduleMin" />
-					</div>
-					<div class="input">
-						<label for="scheduleMax"
-							>Max. Delay</label
-						>
-						<input
-							type="number"
-							name="scheduleMax"
-							id="scheduleMax" />
-					</div>
+				<div class="input">
+					<label for="searchMax">Max. Delay</label>
+					<input type="number" name="searchMax" id="searchMax" />
 				</div>
-				<div id="scheduleMode" class="mode">
-					<a
-						class="m1"
-						title="Schedule won't run automatically"
-						type="button"
-						role="button"
-						>Manual Only</a
-					>
-					<a
-						class="m2"
-						title="Schedule will run automatically when browser starts"
-						type="button"
-						role="button"
-						>At Startup</a
-					>
-					<a
-						class="m3"
-						title="Schedule will run automatically every ~5 minutes (randomised)"
-						type="button"
-						role="button"
-						>Every ~5 Minutes</a
-					>
-					<a
-						class="m4"
-						title="Schedule will run automatically every ~15 minutes (randomised)"
-						type="button"
-						role="button"
-						>Every ~15 Minutes</a
-					>
+			</div>
+			<div id="searchMode" class="mode">
+				<a class="m1" title="0 Mobile and 30 PC points" type="button" role="button">1 - 0</a>
+				<a class="m2" title="30 Mobile and 60 PC points" type="button" role="button">0 - 1</a>
+				<a class="m3" title="60 Mobile and 90 PC points" type="button" role="button">0 - 21</a>
+				<a class="m4" title="90 Mobile and 150 PC points" type="button" role="button">Custom</a>
+			</div>
+			<button id="searchTrigger" class="trigger" title="Start/Stop Searches" type="button" role="button">
+				Search
+			</button>
+		</section>
+		<section id="schedule">
+			<div class="tile">
+				<div class="input">
+					<label for="scheduleDesk">Desktop</label>
+					<input type="number" name="scheduleDesk" id="scheduleDesk" />
 				</div>
-				<button
-					id="scheduleTrigger"
-					class="trigger"
-					title="Start/Stop Schedule"
-					type="button"
-					role="button">
-					Schedule
-				</button>
-			</section>
-			<section id="settings">
-				<div class="menuItem">
-					<label for="version"> Version: </label>
-					<input
-						type="text"
-						name="version"
-						id="version"
-						value=""
-						readonly />
+				<div class="input">
+					<label for="scheduleMob">Mobile</label>
+					<input type="number" name="scheduleMob" id="scheduleMob" />
 				</div>
-				<!-- <div class="menuItem">
+				<div class="progressBar">
+					<div class="progress"></div>
+					<div class="failed"></div>
+				</div>
+			</div>
+			<div class="tile">
+				<div class="input">
+					<label for="scheduleMin">Min. Delay</label>
+					<input type="number" name="scheduleMin" id="scheduleMin" />
+				</div>
+				<div class="input">
+					<label for="scheduleMax">Max. Delay</label>
+					<input type="number" name="scheduleMax" id="scheduleMax" />
+				</div>
+			</div>
+			<div id="scheduleMode" class="mode">
+				<a class="m1" title="Schedule won't run automatically" type="button" role="button">Manual Only</a>
+				<a class="m2" title="Schedule will run automatically when browser starts" type="button" role="button">At
+					Startup</a>
+				<a class="m3" title="Schedule will run automatically every ~5 minutes (randomised)" type="button"
+					role="button">Every ~5 Minutes</a>
+				<a class="m4" title="Schedule will run automatically every ~15 minutes (randomised)" type="button"
+					role="button">Every ~15 Minutes</a>
+			</div>
+			<button id="scheduleTrigger" class="trigger" title="Start/Stop Schedule" type="button" role="button">
+				Schedule
+			</button>
+		</section>
+		<section id="settings">
+			<div class="menuItem">
+				<label for="version"> Version: </label>
+				<input type="text" name="version" id="version" value="" readonly />
+			</div>
+			<!-- <div class="menuItem">
 					<label for="uuid">
 						UUID:
 					</label>
 					<input type="text" name="uuid" id="uuid" value="" readonly>
 				</div> -->
-				<div class="menuItem">
-					<label for="userManual"
-						>User Manual:</label
-					>
-					<button
-						type="button"
-						role="link"
-						id="userManual">
-						Open
-					</button>
-				</div>
-				<div class="menuItem">
-					<label for="resetDevice" id="deviceName"
-						>Test Device</label
-					>
-					<a
-						id="resetDevice"
-						title="Click to re-assign a new Simulation Device (randomised)">
-						<span
-							class="material-symbols-outlined"
-							>refresh</span
-						>
-					</a>
-				</div>
-				<div class="menuItem">
-					<label for="clear"
-						>Enhanced Patch v1.5.8 for
-						Mobile points:</label
-					>
-					<input
-						type="checkbox"
-						name="clear"
-						id="clear" checked />
-				</div>
-				<div class="menuItem">
-					<label for="log"
-						>Show Advance Logs:</label
-					>
-					<input
-						type="checkbox"
-						name="log"
-						id="log" />
-				</div>
-				<!--<div class="menuItem">
+			<div class="menuItem">
+				<label for="userManual">User Manual:</label>
+				<button type="button" role="link" id="userManual">
+					Open
+				</button>
+			</div>
+			<div class="menuItem">
+				<label for="resetDevice" id="deviceName">Test Device</label>
+				<a id="resetDevice" title="Click to re-assign a new Simulation Device (randomised)">
+					<span class="material-symbols-outlined">refresh</span>
+				</a>
+			</div>
+			<div class="menuItem">
+				<label for="clear">Enhanced Patch v1.5.8 for
+					Mobile points:</label>
+				<input type="checkbox" name="clear" id="clear" checked />
+			</div>
+			<div class="menuItem">
+				<label for="log">Show Advance Logs:</label>
+				<input type="checkbox" name="log" id="log" />
+			</div>
+			<!--<div class="menuItem">
 					<label for="pro">Pro Key:</label>
 					<input
 						type="password"
@@ -278,198 +135,115 @@
 						id="pro"
 						placeholder="Enter your Pro Key here" />
 				</div> -->
-				<div class="menuItem pro">
-					<label for="niche">Search Niche:</label>
-					<select name="niche" id="niche">
-						<option value="random" selected>
-							Random
-						</option>
-						<option value="anime">
-							Anime
-						</option>
-						<option value="tech">
-							Tech
-						</option>
-						<option value="travel">
-							Travel
-						</option>
-						<option value="movie">
-							Movie
-						</option>
-						<option value="education">
-							Education
-						</option>
-						<option value="music">
-							Music
-						</option>
-					</select>
+			<div class="menuItem pro">
+				<label for="niche">Search Niche:</label>
+				<select name="niche" id="niche">
+					<option value="random" selected>
+						Random
+					</option>
+					<option value="anime">
+						Anime
+					</option>
+					<option value="tech">
+						Tech
+					</option>
+					<option value="travel">
+						Travel
+					</option>
+					<option value="movie">
+						Movie
+					</option>
+					<option value="education">
+						Education
+					</option>
+					<option value="music">
+						Music
+					</option>
+				</select>
+			</div>
+			<div class="menuItem pro">
+				<label for="activity">Perform Activities:</label>
+				<button id="activity" title="Perform daily rewards activities" type="button" role="button">
+					Perform
+				</button>
+				<div class="progressBar">
+					<div class="progress act"></div>
 				</div>
-				<div class="menuItem pro">
-					<label for="activity"
-						>Perform Activities:</label
-					>
-					<button
-						id="activity"
-						title="Perform daily rewards activities"
-						type="button"
-						role="button">
-						Perform
-					</button>
-					<div class="progressBar">
-						<div class="progress act"></div>
-					</div>
-				</div>
-				<div class="menuItem pro">
-					<label for="act"
-						>Automate Activities after
-						searches:</label
-					>
-					<input
-						type="checkbox"
-						name="act"
-						id="act"
-						title="Enable/Disable Automate Activities after search" />
-				</div>
-				<div class="menuItem pro">
-					<label for="clearBrowsingData"
-						>Clear Bing Browsing
-						Data:</label
-					>
-					<button
-						id="clearBrowsingData"
-						title="Clear Bing browsing data"
-						type="button"
-						role="button">
-						Clear
-					</button>
-				</div>
-				<div class="menuItem pro">
-					<label for="simulate"
-						>Simulate Tab:</label
-					>
-					<button
-						id="simulate"
-						title="Toggle Simulate tab with selected Simulation device"
-						type="button"
-						role="button">
-						Toggle
-					</button>
-				</div>
-				<div class="menuItem pro">
-					<label for="download"
-						>Download search
-						history(24Hr):</label
-					>
-					<button
-						id="download"
-						title="Download Bing search history"
-						type="button"
-						role="button">
-						Download
-					</button>
-				</div>
-				<div class="menuItem pro">
-					<label for="delete"
-						>Delete search
-						history(24Hr):</label
-					>
-					<button
-						id="delete"
-						title="Delete Bing search history"
-						type="button"
-						role="button">
-						Delete
-					</button>
-				</div>
-				<div class="menuItem pro">
-					<label for="runtime"
-						>Reset Runtime data:</label
-					>
-					<button
-						id="runtime"
-						title="Reset Runtime data of the extension"
-						type="button"
-						role="button">
-						Reset
-					</button>
-				</div>
-				<div class="menuItem pro">
-					<label for="reset"
-						>Reset Extension:</label
-					>
-					<button
-						id="reset"
-						title="Reset the extension to its default settings"
-						type="button"
-						role="button">
-						Reset
-					</button>
-				</div>
-				<div class="menuItem">
-					<label for="purchase"
-						>Purchase/Manage Pro:</label
-					>
-					<a
-						href="https://getprojects.gumroad.com/l/rsa"
-						target="_blank"
-						rel="noopener noreferrer"
-						id="purchase"
-						type="button"
-						role="button">
-						<span
-							class="material-symbols-outlined"
-							>paid</span
-						>
-					</a>
-				</div>
-				<div class="menuItem">
-					<label for="discord"
-						>Join Discord Community:</label
-					>
-					<a
-						href="https://discord.gg/P6DsfZrCZQ"
-						target="_blank"
-						rel="noopener noreferrer"
-						id="discord"
-						type="button"
-						role="button">
-						<span
-							class="material-symbols-outlined"
-							>groups</span
-						>
-					</a>
-				</div>
-				<div class="menuItem">
-					<label for="tutorial"
-						>Access Video Tutorials</label
-					>
-					<a
-						href="https://www.youtube.com/@GetProjectsOfficial/search?query=rewards%20search%20automator"
-						target="_blank"
-						rel="noopener noreferrer"
-						id="tutorial"
-						type="button"
-						role="button">
-						<span
-							class="material-symbols-outlined"
-							>book</span
-						>
-					</a>
-				</div>
-				<div class="menuItem">
-					<label for="consent"
-						>User Consent (T&C):</label
-					>
-					<button
-						id="consent"
-						type="button"
-						title="View User Consent Form and T&C"
-						role="button">
-						View
-					</button>
-				</div>
-			</section>
-			<!--<section id="consentForm">
+			</div>
+			<div class="menuItem pro">
+				<label for="act">Automate Activities after
+					searches:</label>
+				<input type="checkbox" name="act" id="act" title="Enable/Disable Automate Activities after search" />
+			</div>
+			<div class="menuItem pro">
+				<label for="clearBrowsingData">Clear Bing Browsing
+					Data:</label>
+				<button id="clearBrowsingData" title="Clear Bing browsing data" type="button" role="button">
+					Clear
+				</button>
+			</div>
+			<div class="menuItem pro">
+				<label for="simulate">Simulate Tab:</label>
+				<button id="simulate" title="Toggle Simulate tab with selected Simulation device" type="button"
+					role="button">
+					Toggle
+				</button>
+			</div>
+			<div class="menuItem pro">
+				<label for="download">Download search
+					history(24Hr):</label>
+				<button id="download" title="Download Bing search history" type="button" role="button">
+					Download
+				</button>
+			</div>
+			<div class="menuItem pro">
+				<label for="delete">Delete search
+					history(24Hr):</label>
+				<button id="delete" title="Delete Bing search history" type="button" role="button">
+					Delete
+				</button>
+			</div>
+			<div class="menuItem pro">
+				<label for="runtime">Reset Runtime data:</label>
+				<button id="runtime" title="Reset Runtime data of the extension" type="button" role="button">
+					Reset
+				</button>
+			</div>
+			<div class="menuItem pro">
+				<label for="reset">Reset Extension:</label>
+				<button id="reset" title="Reset the extension to its default settings" type="button" role="button">
+					Reset
+				</button>
+			</div>
+			<div class="menuItem">
+				<label for="purchase">Purchase/Manage Pro:</label>
+				<a href="https://getprojects.gumroad.com/l/rsa" target="_blank" rel="noopener noreferrer" id="purchase"
+					type="button" role="button">
+					<span class="material-symbols-outlined">paid</span>
+				</a>
+			</div>
+			<div class="menuItem">
+				<label for="discord">Join Discord Community:</label>
+				<a href="https://discord.gg/P6DsfZrCZQ" target="_blank" rel="noopener noreferrer" id="discord"
+					type="button" role="button">
+					<span class="material-symbols-outlined">groups</span>
+				</a>
+			</div>
+			<div class="menuItem">
+				<label for="tutorial">Access Video Tutorials</label>
+				<a href="https://www.youtube.com/@GetProjectsOfficial/search?query=rewards%20search%20automator"
+					target="_blank" rel="noopener noreferrer" id="tutorial" type="button" role="button">
+					<span class="material-symbols-outlined">book</span>
+				</a>
+			</div>
+			<div class="menuItem">
+				<label for="consent">User Consent (T&C):</label>
+				<button id="consent" type="button" title="View User Consent Form and T&C" role="button">
+					View
+				</button>
+			</div>
+		</section>
+		<!--<section id="consentForm">
 				<h2>
 					By installing and using this extension,
 					you acknowledge and agree to the
@@ -557,8 +331,8 @@
 					Accept & Continue
 				</button>
 			</section> -->
-		</main>
-		<!--<footer>
+	</main>
+	<!--<footer>
 			<a
 				id="promo"
 				href="https://gumroad.com/discover?query=rewards+search+automator"
@@ -590,8 +364,9 @@
 				>
 			</div>
 		</footer> -->
-		<div id="ad-banner-slider"></div>
-	</body>
-	<script src="/ad-script/ad-script.js"></script>
-	<script src="/js/popup.js" type="module"></script>
+	<div id="ad-banner-slider"></div>
+</body>
+<script src="/ad-script/ad-script.js"></script>
+<script src="/js/popup.js" type="module"></script>
+
 </html>

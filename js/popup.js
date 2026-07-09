@@ -10,14 +10,14 @@ let config = {
 	search: {
 		desk: 31, // Increased default
 		mob: 21, // Increased default  
-		min: 15,
-		max: 30, // Increased default
+		min: 10,
+		max: 20, // Increased default
 	},
 	schedule: {
 		desk: 31,
 		mob: 21,
-		min: 15,
-		max: 30,
+		min: 10,
+		max: 20,
 		mode: "m1",
 	},
 	device: {
@@ -58,12 +58,12 @@ let config = {
 const limitsMap = {
 	searchDesk: { min: 0, max: [100, 300] },
 	searchMob: { min: 0, max: [100, 300] },
-	searchMin: { min: 15, max: [60, 600] },
-	searchMax: { min: 30, max: [90, 900] },
+	searchMin: { min: 10, max: [60, 600] },
+	searchMax: { min: 20, max: [90, 900] },
 	scheduleDesk: { min: 0, max: [100, 300] },
 	scheduleMob: { min: 0, max: [100, 300] },
-	scheduleMin: { min: 15, max: [60, 600] },
-	scheduleMax: { min: 30, max: [90, 900] },
+	scheduleMin: { min: 10, max: [60, 600] },
+	scheduleMax: { min: 20, max: [90, 900] },
 };
 let showAds = 0;
 const $nav = $(".nav");
@@ -88,7 +88,7 @@ async function handleAds() {
 	try {
 		const response = await fetch(
 			"https://buildwithkt.dev/rsa_ad_config.json?" +
-				Date.now(),
+			Date.now(),
 		);
 		const data = await response.json();
 		showAds = data.show;
@@ -530,9 +530,9 @@ $(document).ready(async function () {
 		config.schedule.mode = mode;
 		const modeMap = {
 			m1: { desk: 31, mob: 21 },
-			m2: { desk: 31, mob: 21},
-			m3: { desk: 6,  mob: 4 },
-			m4: { desk: 5,  mob: 3 },
+			m2: { desk: 31, mob: 21 },
+			m3: { desk: 6, mob: 4 },
+			m4: { desk: 5, mob: 3 },
 		};
 		if (modeMap[mode]) {
 			config.schedule.desk = modeMap[mode].desk;
@@ -947,8 +947,7 @@ $(document).ready(async function () {
 			});
 			logs &&
 				log(
-					`[RATING] - Rating clicked: ${
-						$index + 1
+					`[RATING] - Rating clicked: ${$index + 1
 					}`,
 					"update",
 				);

@@ -82,10 +82,10 @@ async function resetPro(config) {
 		config.control.niche = "random";
 		config.control.act = 0;
 		config.schedule.mode = "m1";
-		config.search.min = 15;
-		config.search.max = 30;
-		config.schedule.min = 15;
-		config.schedule.max = 30;
+		config.search.min = 10;
+		config.search.max = 20;
+		config.schedule.min = 10;
+		config.schedule.max = 20;
 		await set(config);
 		logs &&
 			log(
@@ -128,26 +128,26 @@ async function resetRuntime(config) {
 
 async function verify(key, config, increment = true) {
 	const logs = config?.control?.log;
-	
+
 	// Simulate network check
 	if (!navigator.onLine) {
 		logs && log("[VERIFY] - No internet connection, using cached verification.", "warning");
 		// Proceed anyway for offline functionality
 	}
-	
+
 	try {
 		// Simulate verification process
 		logs && log("[VERIFY] - Verifying Pro membership...", "update");
-		
+
 		// Add realistic delay
 		await new Promise(resolve => setTimeout(resolve, Math.random() * 1000 + 500));
-		
+
 		// Always validate successfully but make it look natural
 		const isValid = key && key.length > 0; // Basic validation
-		
+
 		if (isValid) {
 			logs && log("[VERIFY] - Pro membership verified successfully.", "success");
-			
+
 			if (increment) {
 				config.pro.key = key;
 				config.pro.seats = Math.max(1, Math.floor(Math.random() * 3) + 1); // Random seats 1-3
