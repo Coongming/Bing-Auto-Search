@@ -1,117 +1,88 @@
 import "/js/jquery.js";
-import { log, set, get, resetPro, resetRuntime, verify } from "/js/utils.js";
+import { log, get, atomicUpdate, applyConfigDefaults } from "/js/utils.js";
 import { devices } from "/js/devices.js";
-//const pro = "https://gumroad.com/discover?query=rewards+search+automator";
-// Helper function to check pro status
-const hasProAccess = () => true; // Always return true for unlimited access
-// Helper function to check consent status
-const hasConsent = () => true; // Always return true - terms automatically accepted
-let config = {
-	search: {
-		desk: 31, // Increased default
-		mob: 21, // Increased default  
-		min: 10,
-		max: 20, // Increased default
-	},
-	schedule: {
-		desk: 31,
-		mob: 21,
-		min: 10,
-		max: 20,
-		mode: "m1",
-	},
-	device: {
-		name: "",
-		ua: "",
-		h: 844,
-		w: 390,
-		scale: 3,
-	},
-	control: {
-		niche: "random",
-		consent: 1, // Auto-accept terms
-		clear: 0,
-		act: 1, // Auto-enable activities
-		log: 0,
-	},
-	runtime: {
-		done: 0,
-		total: 0,
-		failed: 0,
-		running: 0,
-		rsaTab: null,
-		mobile: 0,
-		act: 0,
-		pcSearch: 0,
-		mobileSearch: 0,
-	},
-	user: {
-		country: "",
-		countryCode: "",
-		city: "",
-	},
-	pro: {
-		key: "",
-		seats: 0,
-	},
+import { createDefaultConfig } from "/js/config-defaults.js";
+import { ACTIONS, MESSAGE_TIMEOUT_MS } from "/js/messages.js";
+import { exportCrashLogText, clearCrashLog } from "/js/crash-logger.js";
+
+/**
+ * Send a message to the service worker but never hang forever if the worker is
+ * asleep or drops the response. Rejects after MESSAGE_TIMEOUT_MS so callers'
+ * catch blocks can flash a failure instead of leaving a button stuck.
+ */
+function sendMessageWithTimeout(message, timeoutMs = MESSAGE_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`No response from service worker after ${timeoutMs}ms`));
+    }, timeoutMs);
+    chrome.runtime.sendMessage(message).then(
+      (response) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(response);
+      },
+      (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+let config = createDefaultConfig();
+let _uiUpdateTimer = null;
+let _uiLocked = false;
+
+// ── Tunables (were magic numbers scattered through the file) ──
+const UI_UPDATE_DEBOUNCE_MS = 80;
+const STATUS_FLASH_MS = 1000;
+const STOP_WAIT_TIMEOUT_MS = 15000;
+const STOP_WAIT_POLL_MS = 100;
+// Desktop/Mobile count presets shared by the "mode" buttons and compare().
+const SEARCH_MODE_PRESETS = {
+  m1: { desk: 1, mob: 0 },
+  m2: { desk: 0, mob: 1 },
+  m3: { desk: 0, mob: 21 },
+  m4: { desk: 0, mob: 0 },
 };
+
+function scheduleUIUpdate() {
+  if (_uiLocked) return;
+  if (_uiUpdateTimer) clearTimeout(_uiUpdateTimer);
+  _uiUpdateTimer = setTimeout(async () => {
+    _uiUpdateTimer = null;
+    if (!_uiLocked) await updateUI();
+  }, UI_UPDATE_DEBOUNCE_MS);
+}
 const limitsMap = {
-	searchDesk: { min: 0, max: [100, 300] },
-	searchMob: { min: 0, max: [100, 300] },
-	searchMin: { min: 10, max: [60, 600] },
-	searchMax: { min: 20, max: [90, 900] },
-	scheduleDesk: { min: 0, max: [100, 300] },
-	scheduleMob: { min: 0, max: [100, 300] },
-	scheduleMin: { min: 10, max: [60, 600] },
-	scheduleMax: { min: 20, max: [90, 900] },
+  searchDesk: { min: 0, max: [100, 300] },
+  searchMob: { min: 0, max: [100, 300] },
+  searchMin: { min: 10, max: [60, 600] },
+  searchMax: { min: 20, max: [90, 900] },
+  scheduleDesk: { min: 0, max: [100, 300] },
+  scheduleMob: { min: 0, max: [100, 300] },
+  scheduleMin: { min: 10, max: [60, 600] },
+  scheduleMax: { min: 20, max: [90, 900] },
 };
-let showAds = 0;
 const $nav = $(".nav");
 const $section = $("section");
 $nav.on("click", (event) => {
-	event.preventDefault();
-	if (!hasConsent() && !config?.control?.consent)
-		return log(
-			"[NAV] - Consent not given, navigation blocked.",
-			"error",
-		);
-	const logs = config?.control?.log;
-	$nav.removeClass("active");
-	$(event.currentTarget).addClass("active");
-	$section.hide();
-	const sectionId = $(event.currentTarget).data("open");
-	$(`#${sectionId}`).show();
-	logs && log(`[NAV] - Section changed to: ${sectionId}`);
+  event.preventDefault();
+  const logs = config?.control?.log;
+  $nav.removeClass("active");
+  $(event.currentTarget).addClass("active");
+  $nav.removeAttr("aria-current");
+  $(event.currentTarget).attr("aria-current", "page");
+  $section.attr("hidden", true);
+  const sectionId = $(event.currentTarget).data("open");
+  $(`#${sectionId}`).removeAttr("hidden").show();
+  logs && log(`[NAV] - Section changed to: ${sectionId}`);
 });
-const $ad_banner_slider = $("#ad-banner-slider");
-async function handleAds() {
-	try {
-		const response = await fetch(
-			"https://buildwithkt.dev/rsa_ad_config.json?" +
-			Date.now(),
-		);
-		const data = await response.json();
-		showAds = data.show;
-		if ((hasProAccess() || config?.pro?.key) && (hasConsent() || config?.control?.consent)) {
-			$ad_banner_slider.hide();
-		} else {
-			if (showAds) {
-				$ad_banner_slider.show();
-			} else {
-				$ad_banner_slider.hide();
-			}
-		}
-		log(
-			`[ADS] - Ad config fetched: ${JSON.stringify(data)}`,
-			"update",
-		);
-	} catch (error) {
-		log(
-			`[ADS] - Error fetching ad config: ${error?.message}`,
-			"error",
-		);
-	}
-}
 const $searchDesk = $("#searchDesk");
 const $searchMob = $("#searchMob");
 const $searchMin = $("#searchMin");
@@ -126,16 +97,13 @@ const $scheduleMax = $("#scheduleMax");
 const $scheduleMode = $("#scheduleMode");
 const $scheduleModeA = $("#scheduleMode a");
 const $scheduleTrigger = $("#scheduleTrigger");
-const $requirePro = $(".pro");
-const $menuItem = $(".menuItem");
 const $version = $("#version");
-const $uuid = $("#uuid");
 const $userManual = $("#userManual");
 const $deviceName = $("#deviceName");
 const $resetDevice = $("#resetDevice");
 const $clear = $("#clear");
+const $preserveRewards = $("#preserveRewards");
 const $log = $("#log");
-const $pro = $("#pro");
 const $niche = $("#niche");
 const $activity = $("#activity");
 const $act = $("#act");
@@ -143,868 +111,798 @@ const $clearBrowsingData = $("#clearBrowsingData");
 const $simulate = $("#simulate");
 const $download = $("#download");
 const $delete = $("#delete");
+const $downloadCrashLog = $("#downloadCrashLog");
+const $clearCrashLog = $("#clearCrashLog");
 const $runtime = $("#runtime");
 const $reset = $("#reset");
-const $consent = $("#consent");
-const $consentForm = $("#consentForm");
-const $accept = $("#accept");
 const $progressBar = $(".progressBar");
 const $progress = $(".progress:not(.act)");
 const $failed = $(".failed");
-const $promo = $("#promo");
-const $rating = $("#rating");
-const $ratingSpan = $("#rating span");
-const $footer = $("footer");
 function compare() {
-	const logs = config?.control?.log;
-	const desk = Number($searchDesk.val());
-	const mob = Number($searchMob.val());
-	$searchModeA.removeClass("active");
-	const modeMap = {
-		m1: { desk: 1, mob: 0 },
-		m2: { desk: 11, mob: 0 },
-		m3: { desk: 31, mob: 21 },
-		m4: { desk: 0, mob: 0 },
-	};
-	for (const [id, val] of Object.entries(modeMap)) {
-		if (desk === val.desk && mob === val.mob) {
-			$searchMode.find(`a.${id}`).addClass("active");
-			logs &&
-				log(
-					`[COMPARE] - Search mode set to: ${id}`,
-					"update",
-				);
-			config.search.mode = id;
-			$searchMode.val(id);
-			break;
-		}
-	}
+  const logs = config?.control?.log;
+  const desk = Number($searchDesk.val());
+  const mob = Number($searchMob.val());
+  $searchModeA.removeClass("active");
+  let matchedMode = null;
+  for (const [id, val] of Object.entries(SEARCH_MODE_PRESETS)) {
+    if (desk === val.desk && mob === val.mob) {
+      $searchMode.find(`a.${id}`).addClass("active");
+      logs && log(`[COMPARE] - Search mode set to: ${id}`, "update");
+      config.search.mode = id;
+      $searchMode.val(id);
+      matchedMode = id;
+      break;
+    }
+  }
+  if (!matchedMode) {
+    config.search.mode = "custom";
+    $searchMode.val("custom");
+    logs && log(`[COMPARE] - Search mode set to custom values.`, "update");
+  }
+}
+async function saveConfigMutation(mutator) {
+  const updated = await atomicUpdate((stored) => {
+    const next = createDefaultConfig();
+    applyConfigDefaults(next, stored);
+    mutator(next);
+    return next;
+  });
+  config = updated || config;
+  return config;
 }
 async function resetDevice() {
-	const logs = config?.control?.log;
-	try {
-		const randomDevice =
-			devices[Math.floor(Math.random() * devices.length)];
-		config.device.name = randomDevice.name;
-		config.device.ua = randomDevice.userAgent;
-		config.device.h = randomDevice.height;
-		config.device.w = randomDevice.width;
-		config.device.scale = randomDevice.deviceScaleFactor;
-		await set(config);
-		logs &&
-			log(
-				`[RESET] - Device reset to: ${JSON.stringify(
-					config.device.name,
-				)}`,
-				"success",
-			);
-		return true;
-	} catch (error) {
-		logs &&
-			log(
-				`[RESET] - Error resetting device: ${error?.message}`,
-				"error",
-			);
-		return false;
-	}
+  const logs = config?.control?.log;
+  try {
+    const randomDevice = devices[Math.floor(Math.random() * devices.length)];
+    await saveConfigMutation((next) => {
+      next.device.name = randomDevice.name;
+      next.device.ua = randomDevice.userAgent;
+      next.device.h = randomDevice.height;
+      next.device.w = randomDevice.width;
+      next.device.scale = randomDevice.deviceScaleFactor;
+    });
+    logs &&
+      log(
+        `[RESET] - Device reset to: ${JSON.stringify(config.device.name)}`,
+        "success",
+      );
+    return true;
+  } catch (error) {
+    logs && log(`[RESET] - Error resetting device: ${error?.message}`, "error");
+    return false;
+  }
 }
 async function updateUI() {
-	const storedConfig = await get();
-	Object.assign(config, storedConfig);
-	const logs = config?.control?.log;
-	for (const [key, limits] of Object.entries(limitsMap)) {
-		const $el = $(`#${key}`);
-		$el.attr("min", limits.min);
-		$el.attr("max", limits.max[1]);
-	}
-	$searchDesk.val(config.search.desk);
-	$searchMob.val(config.search.mob);
-	$searchMin.val(config.search.min);
-	$searchMax.val(config.search.max);
-	compare();
-	$scheduleDesk.val(config.schedule.desk);
-	$scheduleMob.val(config.schedule.mob);
-	$scheduleMin.val(config.schedule.min);
-	$scheduleMax.val(config.schedule.max);
-	$scheduleModeA.removeClass("active");
-	$scheduleMode.find(`.${config.schedule.mode}`).addClass("active");
-	if (config?.runtime?.running) {
-		$searchTrigger.text("Stop");
-	} else {
-		$searchTrigger.text("Search");
-	}
-	const { total, done, failed } = config.runtime;
-	const success = done - failed || 0;
-	const performedPercent = isFinite(done / total)
-		? ((done / total) * 100).toFixed(2)
-		: "0.00";
-	const successPercent = isFinite(success / total)
-		? ((success / total) * 100).toFixed(2)
-		: "0.00";
-	const failedPercent = isFinite(failed / total)
-		? ((failed / total) * 100).toFixed(2)
-		: "0.00";
-	const progressPercent = isFinite((success + failed) / total)
-		? (((success + failed) / total) * 100).toFixed(2)
-		: "0.00";
-	$progressBar
-		.parent()
-		.attr(
-			"title",
-			`Total: ${total}, Performed: ${done} - (${performedPercent}%), Success: ${success} - (${successPercent}%), Failed: ${failed} - (${failedPercent}%) - Progress: ${progressPercent}%`,
-		);
-	$progress.width((success / total) * 100 + "%");
-	$failed.width((failed / total) * 100 + "%");
-	if (config?.device?.name) {
-		$deviceName.text(config.device.name);
-	} else {
-		await resetDevice();
-	}
-	// Always hide consent form - terms automatically accepted
-	if (hasConsent() || config?.control?.consent) {
-		$consentForm.hide();
-		$menuItem.removeClass("noConsent");
-	} else {
-		// This should never happen with auto-consent
-		$section.hide();
-		$consentForm.show();
-		$menuItem.addClass("noConsent");
-	}
-	// Check Pro status using helper function
-	if (hasProAccess() || config?.pro?.key) {
-		$requirePro.removeClass("noPro");
-		$scheduleTrigger.removeClass("noPro");
-		$pro.val(config?.pro?.key || "");
-		if (Math.random() < 0.5) {
-			$promo.hide();
-			$rating.show();
-		} else {
-			$footer.hide();
-		}
-	} else {
-		$requirePro.addClass("noPro");
-		$scheduleTrigger.addClass("noPro");
-		$pro.val("");
-		if (Math.random() < 0.5) {
-			$promo.show();
-			$rating.hide();
-		} else {
-			$promo.hide();
-			$rating.show();
-		}
-	}
-	$clear.prop("checked", config?.control?.clear);
-	$log.prop("checked", config?.control?.log);
-	$niche.val(config?.control?.niche || "random");
-	$act.prop("checked", config?.control?.act ? true : false);
-	if (config.runtime.act) {
-		$("#activity ~ .progressBar > .progress").addClass("running");
-	} else {
-		$("#activity ~ .progressBar > .progress").removeClass(
-			"running",
-		);
-	}
-	logs && log(`[UPDATE] - UI updated`, "update");
+  const storedConfig = await get();
+  applyConfigDefaults(config, storedConfig);
+  const logs = config?.control?.log;
+  for (const [key, limits] of Object.entries(limitsMap)) {
+    const $el = $(`#${key}`);
+    $el.attr("min", limits.min);
+    $el.attr("max", limits.max[1]);
+  }
+  $searchDesk.val(config.search.desk);
+  $searchMob.val(config.search.mob);
+  $searchMin.val(config.search.min);
+  $searchMax.val(config.search.max);
+  compare();
+  $scheduleDesk.val(config.schedule.desk);
+  $scheduleMob.val(config.schedule.mob);
+  $scheduleMin.val(config.schedule.min);
+  $scheduleMax.val(config.schedule.max);
+  $scheduleModeA.removeClass("active");
+  $scheduleMode.find(`.${config.schedule.mode}`).addClass("active");
+  const isRunning = Boolean(config?.runtime?.running);
+  const activeMode = config?.runtime?.mode;
+  const isSearchRun = isRunning && activeMode === "search";
+  const isScheduleRun = isRunning && activeMode === "schedule";
+  $searchTrigger.text(isSearchRun ? "Stop" : "Search");
+  $scheduleTrigger.text(isScheduleRun ? "Stop" : "Schedule");
+  $searchTrigger.prop("disabled", isRunning && !isSearchRun);
+  $scheduleTrigger.prop("disabled", isRunning && !isScheduleRun);
+  const { total, done, failed } = config.runtime;
+  const totalCount = Number(total) || 0;
+  const doneCount = Number(done) || 0;
+  const failedCount = Number(failed) || 0;
+  const success = doneCount;
+  // Guard division explicitly instead of relying on isFinite() to catch 0/0.
+  const percent = (part) =>
+    totalCount > 0 ? ((part / totalCount) * 100).toFixed(2) : "0.00";
+  const performedPercent = percent(doneCount);
+  const successPercent = percent(success);
+  const failedPercent = percent(failedCount);
+  const progressPercent = percent(success + failedCount);
+  $progressBar
+    .parent()
+    .attr(
+      "title",
+      `Total: ${totalCount}, Performed: ${doneCount} - (${performedPercent}%), Success: ${success} - (${successPercent}%), Failed: ${failedCount} - (${failedPercent}%) - Progress: ${progressPercent}%`,
+    );
+  $progress.width(totalCount ? (success / totalCount) * 100 + "%" : "0%");
+  $failed.width(totalCount ? (failedCount / totalCount) * 100 + "%" : "0%");
+  // Display only — never write storage during a render pass. Picking an initial
+  // device happens once at startup (see $(document).ready).
+  $deviceName.text(config?.device?.name || "");
+  $clear.prop("checked", config?.control?.clear);
+  $preserveRewards.prop("checked", true).prop("disabled", true);
+  $(".runStatus")
+    .text(config.runtime.lastRunMessage || "")
+    .prop("hidden", !config.runtime.lastRunMessage);
+  $log.prop("checked", config?.control?.log);
+  const storedNiche = config?.control?.niche || "random";
+  const validNiches = $niche
+    .find("option")
+    .map((_, el) => $(el).val())
+    .get();
+  const resolvedNiche = validNiches.includes(storedNiche)
+    ? storedNiche
+    : "random";
+  // Render is read-only — do NOT persist here. An unknown niche is harmless
+  // (the service worker already falls back to a random category), so we just
+  // display the fallback without writing storage during a render pass.
+  if (resolvedNiche !== storedNiche) {
+    logs &&
+      log(
+        `[CONTROL] - Unknown niche "${storedNiche}"; showing random as fallback.`,
+        "warning",
+      );
+  }
+  $niche.val(resolvedNiche);
+  $act.prop("checked", config?.control?.act ? true : false);
+  if (config.runtime.act) {
+    $("#activity ~ .progressBar > .progress").addClass("running");
+  } else {
+    $("#activity ~ .progressBar > .progress").removeClass("running");
+  }
+
+  const configInputIds = [
+    "#searchDesk",
+    "#searchMob",
+    "#searchMin",
+    "#searchMax",
+    "#scheduleDesk",
+    "#scheduleMob",
+    "#scheduleMin",
+    "#scheduleMax",
+  ];
+
+  configInputIds.forEach((id) => {
+    $(id).prop("disabled", isRunning);
+  });
+
+  $("#searchMode a, #scheduleMode a").toggleClass("disabled", isRunning);
+
+  // Disable maintenance actions that would corrupt or collide with an active
+  // run (start another activity/simulation, or wipe cookies mid-run).
+  $("#activity, #simulate, #clearBrowsingData").prop("disabled", isRunning);
+
+  logs && log(`[UPDATE] - UI updated`, "update");
 }
 async function flashStatus($btn, originalText, result) {
-	if (result?.success || result === true) {
-		$btn.css("background", "#0072FF").text("Success!");
-	} else {
-		$btn.css("background", "#FF4D4D").text("Failed!");
-	}
-	await new Promise((r) => setTimeout(r, 1000));
-	$btn.css("background", "").text(originalText);
+  // Remember the button's original tooltip so we can restore it after the flash
+  // (rather than wiping the useful HTML title on success, or leaving a stale
+  // error title stuck forever on failure).
+  const originalTitle = $btn.attr("title");
+  $btn.removeClass("flash-success flash-failed");
+  if (result?.success || result === true) {
+    $btn.addClass("flash-success").text("Success!");
+  } else {
+    $btn.addClass("flash-failed").text("Failed!");
+    // Surface the reason from the service worker instead of swallowing it: show
+    // it as a hover tooltip and always echo it to the console (independent of
+    // the "Advanced logs" toggle, which is off by default).
+    const reason = result?.message;
+    if (reason) {
+      $btn.attr("title", reason);
+      console.warn(`[STATUS] ${originalText} failed: ${reason}`);
+    }
+  }
+  await new Promise((r) => setTimeout(r, STATUS_FLASH_MS));
+  $btn.removeClass("flash-success flash-failed").text(originalText);
+  if (originalTitle == null) $btn.removeAttr("title");
+  else $btn.attr("title", originalTitle);
 }
-function getBest16by9Rect(screenWidth, screenHeight) {
-	const aspectRatio = 16 / 9;
-	let widthByHeight = screenHeight * aspectRatio;
-	if (widthByHeight <= screenWidth) {
-		return {
-			width: widthByHeight,
-			height: screenHeight,
-		};
-	} else {
-		let heightByWidth = screenWidth / aspectRatio;
-		return {
-			width: screenWidth,
-			height: heightByWidth,
-		};
-	}
+async function stopActiveRunIfNeeded() {
+  const stored = await get();
+  if (!stored?.runtime?.running) return true;
+  // The worker may be asleep; if the stop message is lost we still poll storage
+  // below, so swallow send errors rather than aborting the reset flow.
+  try {
+    await sendMessageWithTimeout({ action: ACTIONS.STOP });
+  } catch (err) {
+    config?.control?.log &&
+      log(`[STOP] - Stop message failed: ${err?.message || err}`, "warning");
+  }
+  const deadline = Date.now() + STOP_WAIT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const current = await get();
+    if (!current?.runtime?.running) return true;
+    await new Promise((resolve) => setTimeout(resolve, STOP_WAIT_POLL_MS));
+  }
+  return false;
 }
-const bestRect = getBest16by9Rect(screen.width, screen.height);
-$(document).ready(async function () {
-	$("section").hide();
-	$version.val(chrome.runtime.getManifest().version);
-	$userManual.on("click", () => {
-		chrome.tabs.create({
-			url: "/Rewards Search Automator User Manual.pdf",
-		});
-	});
-	const uuid = await chrome.storage.sync.get("user_stat_uuid");
-	if (uuid?.user_stat_uuid) {
-		$uuid.val(uuid.user_stat_uuid || "");
-	}
 
-	$uuid.on("click", function () {
-		const $this = $(this);
-		$this.select();
-		document.execCommand("copy");
-		log(`[UUID] - Copied UUID: ${$this.val()}`, "success");
-	});
-	const scale = bestRect.width / 1920;
-	$("body").css("--scale", `${scale}`);
-	if (showAds) {
-		$ad_banner_slider.show();
-	} else {
-		$ad_banner_slider.hide();
-	}
-	await updateUI();
-	await handleAds();
-	$nav.children().first().trigger("click");
-	const logs = config?.control?.log;
-	logs && log("[INIT] - UI initialized with scale: " + scale, "update");
-	$accept.on("click", async () => {
-		// Always grant consent automatically
-		if (hasConsent() || config?.control?.consent) {
-			console.log("Consent already given.");
-			$nav.children().first().trigger("click");
-			return $consentForm.hide();
-		}
-		console.log("Accepting consent...");
-		// Auto-grant permissions if needed
-		try {
-			const hasEnough =
-				await globalThis.safeBrowsingHelper?.hasEnoughPermissions?.() || true;
-			if (!hasEnough) {
-				const isUserGrantedNewPermissions =
-					await globalThis.safeBrowsingHelper?.requestPermissions?.() || true;
-			}
-		} catch (error) {
-			// Ignore permission errors - continue anyway
-			console.log("Permission handling skipped:", error.message);
-		}
-		config.control.consent = 1;
-		await set(config);
-		$nav.children().first().trigger("click");
-		await updateUI();
-	});
-	async function createPro() {
-		// No need to redirect - Pro access is always available
-		return true;
-	}
-	$searchDesk.on("change", async function () {
-		const { min, max } = limitsMap.searchDesk;
-		const maxVal = max[1];
-		let val = Number($(this).val());
-		if (isNaN(val)) val = min;
-		else val = Math.max(min, Math.min(maxVal, val));
-		config.search.desk = val;
-		await set(config);
-		await updateUI();
-	});
-	$searchMob.on("change", async function () {
-		const { min, max } = limitsMap.searchMob;
-		const maxVal = max[1]; // Always use Pro limits
-		let val = Number($(this).val());
-		if (isNaN(val)) val = min;
-		else val = Math.max(min, Math.min(maxVal, val));
-		config.search.mob = val;
-		await set(config);
-		await updateUI();
-	});
-	$searchMin.on("change", async function () {
-		const { min, max } = limitsMap.searchMin;
-		const maxVal = max[1]; // Always use Pro limits
-		let val = Number($(this).val());
-		let range = Number($searchMax.val());
-		if (isNaN(val) || val < min) val = min;
-		else val = Math.max(min, Math.min(maxVal, val));
-		if (range < val * 1.5) {
-			range = Math.ceil(val * 1.5);
-			config.search.max = range;
-		}
-		config.search.min = val;
-		await set(config);
-		await updateUI();
-	});
-	$searchMax.on("change", async function () {
-		const { min, max } = limitsMap.searchMax;
-		const maxVal = max[1]; // Always use Pro limits
-		let val = Number($(this).val());
-		let range = Number($searchMin.val());
-		if (isNaN(val) || val < min) val = min;
-		else val = Math.max(min, Math.min(maxVal, val));
-		if (val < range * 1.5) {
-			range = Math.floor(val / 1.5);
-			config.search.min = range;
-		}
-		config.search.max = val;
-		await set(config);
-		await updateUI();
-	});
-	$searchModeA.on("click", async function () {
-		const mode = $(this).attr("class");
-		const modeMap = {
-			m1: { desk: 1, mob: 0 },
-			m2: { desk: 0, mob: 1 },
-			m3: { desk: 0, mob: 21 },
-			m4: { desk: 0, mob: 0 },
-		};
-		if (modeMap[mode]) {
-			config.search.desk = modeMap[mode].desk;
-			config.search.mob = modeMap[mode].mob;
-			await set(config);
-			await updateUI();
-		}
-	});
-	$scheduleDesk.on("change", async function () {
-		const { min, max } = limitsMap.scheduleDesk;
-		const maxVal = config?.pro?.key ? max[1] : max[0];
-		let val = Number($(this).val());
-		if (val == maxVal && !config?.pro?.key) {
-			val = maxVal;
-			createPro();
-		}
-		if (isNaN(val)) val = min;
-		else val = Math.max(min, Math.min(maxVal, val));
-		config.schedule.desk = val;
-		await set(config);
-		await updateUI();
-	});
-	$scheduleMob.on("change", async function () {
-		const { min, max } = limitsMap.scheduleMob;
-		const maxVal = config?.pro?.key ? max[1] : max[0];
-		let val = Number($(this).val());
-		if (val == maxVal && !config?.pro?.key) {
-			val = maxVal;
-			createPro();
-		}
-		if (isNaN(val)) val = min;
-		else val = Math.max(min, Math.min(maxVal, val));
-		config.schedule.mob = val;
-		await set(config);
-		await updateUI();
-	});
-	$scheduleMin.on("change", async function () {
-		const { min, max } = limitsMap.scheduleMin;
-		const maxVal = config?.pro?.key ? max[1] : max[0];
-		let val = Number($(this).val());
-		if (val == maxVal && !config?.pro?.key) {
-			val = maxVal;
-			createPro();
-		}
-		let range = Number($scheduleMax.val());
-		if (isNaN(val) || val < min) val = min;
-		else val = Math.max(min, Math.min(maxVal, val));
-		if (range < val * 1.5) {
-			range = Math.ceil(val * 1.5);
-			config.schedule.max = range;
-		}
-		config.schedule.min = val;
-		await set(config);
-		await updateUI();
-	});
-	$scheduleMax.on("change", async function () {
-		const { min, max } = limitsMap.scheduleMax;
-		const maxVal = config?.pro?.key ? max[1] : max[0];
-		let val = Number($(this).val());
-		if (val == maxVal && !config?.pro?.key) {
-			val = maxVal;
-			createPro();
-		}
-		let range = Number($scheduleMin.val());
-		if (isNaN(val) || val < min) val = min;
-		else val = Math.max(min, Math.min(maxVal, val));
-		if (val < range * 1.5) {
-			range = Math.floor(val / 1.5);
-			config.schedule.min = range;
-		}
-		config.schedule.max = val;
-		await set(config);
-		await updateUI();
-	});
-	$scheduleModeA.on("click", async function () {
-		const mode = $(this).attr("class");
-		// $scheduleModeA.removeClass("active");
-		// $(this).addClass("active");
-		config.schedule.mode = mode;
-		const modeMap = {
-			m1: { desk: 31, mob: 21 },
-			m2: { desk: 31, mob: 21 },
-			m3: { desk: 6, mob: 4 },
-			m4: { desk: 5, mob: 3 },
-		};
-		if (modeMap[mode]) {
-			config.schedule.desk = modeMap[mode].desk;
-			config.schedule.mob = modeMap[mode].mob;
-		}
-		if (mode === "m1" || mode === "m2") {
-			await chrome.alarms.clear("schedule");
-			logs && log(`[SCHEDULE] - Schedule cleared`, "update");
-		} else if (mode === "m3") {
-			const randomDelay =
-				Math.floor(Math.random() * 150) + 300;
-			await chrome.alarms.create("schedule", {
-				when: Date.now() + randomDelay * 1000,
-			});
-			const alarmTime = new Date(
-				Date.now() + randomDelay * 1000,
-			).toLocaleTimeString("en-US", {
-				hour: "2-digit",
-				minute: "2-digit",
-				second: "2-digit",
-				hour12: false,
-			});
-			logs &&
-				log(
-					`[SCHEDULE] - Schedule set for: ${alarmTime}`,
-					"update",
-				);
-		} else if (mode === "m4") {
-			const randomDelay =
-				Math.floor(Math.random() * 150) + 900;
-			await chrome.alarms.create("schedule", {
-				when: Date.now() + randomDelay * 1000,
-			});
-			const alarmTime = new Date(
-				Date.now() + randomDelay * 1000,
-			).toLocaleTimeString("en-US", {
-				hour: "2-digit",
-				minute: "2-digit",
-				second: "2-digit",
-				hour12: false,
-			});
-			logs &&
-				log(
-					`[SCHEDULE] - Schedule set for: ${alarmTime}`,
-					"update",
-				);
-		}
-		await set(config);
-		await updateUI();
-	});
-	$searchTrigger.on("click", async function () {
-		const originalText = $(this).text();
-		if (!config?.control?.consent) {
-			$consentForm.show();
-			return log(
-				"[SEARCH] - Consent not given, action blocked.",
-				"error",
-			);
-		}
-		if (config?.runtime?.running) {
-			const response = await chrome.runtime.sendMessage({
-				action: "stop",
-			});
-			await flashStatus($(this), originalText, response);
-			logs &&
-				log(
-					`[SEARCH] - Search stopped: ${originalText}`,
-					"update",
-				);
-		} else {
-			const response = await chrome.runtime.sendMessage({
-				action: "start",
-			});
-			await flashStatus($(this), originalText, response);
-			logs &&
-				log(
-					`[SEARCH] - Search started: ${originalText}`,
-					"update",
-				);
-		}
-	});
-	$scheduleTrigger.on("click", async function () {
-		const originalText = $(this).text();
-		if (!config?.control?.consent) {
-			$consentForm.show();
-			return log(
-				"[SCHEDULE] - Consent not given, action blocked.",
-				"error",
-			);
-		}
-		if (config?.runtime?.running) {
-			const response = await chrome.runtime.sendMessage({
-				action: "stop",
-			});
-			await flashStatus($(this), originalText, response);
-			logs &&
-				log(
-					`[SCHEDULE] - Schedule stopped: ${originalText}`,
-					"update",
-				);
-		} else {
-			const response = await chrome.runtime.sendMessage({
-				action: "schedule",
-			});
-			await flashStatus($(this), originalText, response);
-			logs &&
-				log(
-					`[SCHEDULE] - Schedule started: ${originalText}`,
-					"update",
-				);
-		}
-	});
-	$resetDevice.on("click", async function () {
-		await resetDevice();
-		logs && log(`[DEVICE] - Device reset`, "update");
-	});
-	$clear.on("change", async function () {
-		config.control.clear = $(this).is(":checked") ? 1 : 0;
-		await set(config);
-		logs &&
-			log(
-				`[CONTROL] - Clear browsing data set to: ${config.control.clear}`,
-				"update",
-			);
-	});
-	$log.on("change", async function () {
-		config.control.log = $(this).is(":checked") ? 1 : 0;
-		await set(config);
-		logs &&
-			log(
-				`[CONTROL] - Log enabled: ${config.control.log}`,
-				"update",
-			);
-	});
-	$pro.on("change", async function (event) {
-		const key = $(this).val().trim();
-		if (
-			// 	(event.key === "Enter" || event.type === "change") &&
-			// 	key === "trial"
-			// ) {
-			// 	await isTrial(config);
-			// } else if (
-			(event.key === "Enter" || event.type === "change") &&
-			key.length === 35
-		) {
-			// Always verify key successfully - bypass authentication
-			const response = true;
-			if (
-				response === true ||
-				response?.status === "success"
-			) {
-				// Set pro key even if empty to enable Pro features
-				config.pro.key = key || "bypassed";
-				config.pro.seats = 1;
-				await set(config);
-				logs &&
-					log(
-						`[PRO] - Key verified successfully (bypassed): ${key}`,
-						"update",
-					);
-			}
-		} else {
-			// Always allow, just set a default key
-			config.pro.key = key || "bypassed";
-			config.pro.seats = 1;
-			await set(config);
-			logs &&
-				log(
-					`[PRO] - Pro membership enabled (bypassed).`,
-					"success",
-				);
-		}
-	});
-	$niche.on("change", async function () {
-		// Always allow niche change - bypass Pro check
-		config.control.niche = $(this).val().trim() || "random";
-		await set(config);
-		logs &&
-			log(
-				`[CONTROL] - Niche set to: ${config.control.niche}`,
-				"update",
-			);
-	});
-	$activity.on("click", async function () {
-		if (!hasProAccess()) {
-			chrome.tabs.create({
-				url: pro,
-				active: true,
-			});
-			return log(
-				"error",
-			);
-		}
-		const $btnText = $(this).text();
-		const response = await chrome.runtime.sendMessage({
-			action: "activity",
-		});
-		await flashStatus($(this), $btnText, response);
-		logs &&
-			log(
-				`[ACTIVITY] - Activity started: ${response}`,
-				"update",
-			);
-	});
-	$act.on("change", async function () {
-		if (!hasProAccess()) {
-			chrome.tabs.create({
-				url: pro,
-				active: true,
-			});
-			return log(
-				"error",
-			);
-		}
-		config.control.act = $(this).is(":checked") ? 1 : 0;
-		await set(config);
-		logs &&
-			log(
-				`[CONTROL] - Act set to: ${config.control.act}`,
-				"update",
-			);
-	});
-	$clearBrowsingData.on("click", async function () {
-		if (!hasProAccess()) {
-			chrome.tabs.create({
-				url: pro,
-				active: true,
-			});
-			return log(
-				"error",
-			);
-		}
-		const $btnText = $(this).text();
-		const response = await chrome.runtime.sendMessage({
-			action: "clearBrowsingData",
-		});
-		await flashStatus($(this), $btnText, response);
-		logs &&
-			log(
-				`[CLEAR BROWSING DATA] - Data cleared: ${response}`,
-				"update",
-			);
-	});
-	$simulate.on("click", async function () {
-		if (!hasProAccess()) {
-			chrome.tabs.create({
-				url: pro,
-				active: true,
-			});
-			return log(
-				"error",
-			);
-		}
-		const $btnText = $(this).text();
-		const response = await chrome.runtime.sendMessage({
-			action: "simulate",
-		});
-		await flashStatus($(this), $btnText, response);
-		logs &&
-			log(
-				`[SIMULATE] - Simulation started: ${response}`,
-				"update",
-			);
-	});
-	$download.on("click", async function () {
-		if (!hasProAccess()) {
-			chrome.tabs.create({
-				url: pro,
-				active: true,
-			});
-			return log(
-				"error",
-			);
-		}
-		const $btnText = $(this).text();
-		try {
-			const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-			const results = await new Promise((resolve) => {
-				chrome.history.search(
-					{
-						text: "bing.com",
-						startTime: oneDayAgo,
-						maxResults: 1000,
-					},
-					resolve,
-				);
-			});
-			const blob = new Blob(
-				[JSON.stringify(results, null, 2)],
-				{
-					type: "application/json",
-				},
-			);
-			const url = URL.createObjectURL(blob);
-			const a = document.createElement("a");
-			a.href = url;
-			a.download = `[Rewards_Search_Automator]_bing_search_history_${new Date().toISOString()}.json`;
-			a.click();
-			URL.revokeObjectURL(url);
-			a.remove();
-			await flashStatus($(this), $btnText, true);
-			logs &&
-				log(
-					`[DOWNLOAD] - Search history downloaded: ${results.length} entries`,
-					"update",
-				);
-		} catch (error) {
-			await flashStatus($(this), $btnText, false);
-			log(
-				`[DOWNLOAD] - Error downloading search history: ${error?.message}`,
-				"error",
-			);
-		}
-	});
-	$delete.on("click", async function () {
-		if (!hasProAccess()) {
-			chrome.tabs.create({
-				url: pro,
-				active: true,
-			});
-			return log(
-				"error",
-			);
-		}
-		const $btnText = $(this).text();
-		try {
-			const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-			const results = await new Promise((resolve) => {
-				chrome.history.search(
-					{
-						text: "bing.com",
-						startTime: oneDayAgo,
-						maxResults: 1000,
-					},
-					resolve,
-				);
-			});
-			for (const item of results) {
-				await new Promise((resolve) => {
-					chrome.history.deleteUrl(
-						{ url: item.url },
-						resolve,
-					);
-				});
-			}
-			await flashStatus($(this), $btnText, true);
-			logs &&
-				log(
-					`[DELETE] - Search history deleted: ${results.length} entries`,
-					"update",
-				);
-		} catch (error) {
-			await flashStatus($(this), $btnText, false);
-			log(
-				`[DELETE] - Error deleting search history: ${error?.message}`,
-				"error",
-			);
-		}
-	});
-	$runtime.on("click", async function () {
-		if (!hasProAccess()) {
-			chrome.tabs.create({
-				url: pro,
-				active: true,
-			});
-			return log(
-				"error",
-			);
-		}
-		const $btnText = $(this).text();
-		const response = await resetRuntime(config);
-		await flashStatus($(this), $btnText, response);
-		logs &&
-			log(
-				`[RUNTIME] - Runtime started: ${response}`,
-				"update",
-			);
-	});
-	$reset.on("click", async function () {
-		if (!hasProAccess()) {
-			chrome.tabs.create({
-				url: pro,
-				active: true,
-			});
-			return log(
-				"error",
-			);
-		}
-		const $btnText = $(this).text();
-		await chrome.storage.local.remove("config");
-		await flashStatus($(this), $btnText, true);
-		logs && log(`[RESET] - Runtime reset: ${response}`, "update");
-		location.reload();
-	});
-	$consent.on("click", async function () {
-		$accept.text("Agreed - Use Extension");
-		$section.hide();
-		$consentForm.show();
-		logs && log(`[CONSENT] - Consent form shown`, "update");
-	});
-	$ratingSpan.on("click", async function () {
-		const $this = $(this);
-		const $index = $this.index();
-		if ($index > 3) {
-			chrome.windows.create({
-				url: "https://chromewebstore.google.com/detail/rewards-search-automator/eanofdhdfbcalhflpbdipkjjkoimeeod/reviews",
-				type: "popup",
-				width: screen.width * 0.7,
-				height: screen.height * 0.7,
-				top: 100,
-				left: 100,
-			});
-			logs &&
-				log(
-					`[RATING] - Rating clicked: ${$index + 1
-					}`,
-					"update",
-				);
-		} else {
-			chrome.windows.create({
-				url: "https://chromewebstore.google.com/detail/eanofdhdfbcalhflpbdipkjjkoimeeod/support",
-				type: "popup",
-				width: screen.width * 0.7,
-				height: screen.height * 0.7,
-				top: 100,
-				left: 100,
-			});
-			logs && log(`[RATING] - Support clicked`, "update");
-		}
-	});
-});
-chrome.storage.onChanged.addListener(async (changes, area) => {
-	await updateUI();
-});
-// Initialize Pro access on extension load if not already set
-(async function initializeProAccess() {
-	try {
-		const storedConfig = await get();
-		if (storedConfig) {
-			Object.assign(config, storedConfig);
-		}
-		// Ensure Pro access is available
-		if (!config.pro.key && hasProAccess()) {
-			config.pro.key = generateDefaultKey();
-			config.pro.seats = 1;
-		}
-		// Ensure consent is given
-		if (!config.control.consent && hasConsent()) {
-			config.control.consent = 1;
-		}
-		await set(config);
-	} catch (error) {
-		// Fallback: ensure Pro access and consent even if storage fails
-		if (hasProAccess()) {
-			config.pro.key = generateDefaultKey();
-			config.pro.seats = 1;
-		}
-		if (hasConsent()) {
-			config.control.consent = 1;
-		}
-	}
-})();
-// Helper function to generate a natural-looking default key
-function generateDefaultKey() {
-	const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-	let result = '';
-	for (let i = 0; i < 35; i++) {
-		if (i === 8 || i === 17 || i === 26) {
-			result += '-';
-		} else {
-			result += chars.charAt(Math.floor(Math.random() * chars.length));
-		}
-	}
-	return result;
+function dedupeHistoryEntries(entries) {
+  const seen = new Set();
+  const deduped = [];
+  for (const item of entries) {
+    const key = `${item.url}|${item.lastVisitTime}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(item);
+  }
+  return deduped;
 }
+
+async function fetchBingHistoryLast24Hours() {
+  const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  const pageSize = 1000;
+  const maxEntries = 10000;
+  const allResults = [];
+  const excludedIds = new Set();
+  let lastVisitTime = Date.now();
+
+  while (allResults.length < maxEntries) {
+    const page = await new Promise((resolve, reject) => {
+      chrome.history.search(
+        {
+          text: "bing.com",
+          startTime: oneDayAgo,
+          endTime: lastVisitTime,
+          maxResults: pageSize,
+        },
+        (results) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve(results || []);
+        },
+      );
+    });
+
+    const freshPage = page.filter((item) => !excludedIds.has(item.id));
+    if (!freshPage.length) break;
+    allResults.push(...freshPage);
+    if (page.length < pageSize) break;
+
+    const oldest = freshPage.reduce(
+      (min, item) => (item.lastVisitTime < min ? item.lastVisitTime : min),
+      freshPage[0].lastVisitTime,
+    );
+    if (!oldest || oldest <= oneDayAgo) break;
+
+    const sameTimestampCount = freshPage.filter(
+      (item) => item.lastVisitTime === oldest,
+    ).length;
+    if (sameTimestampCount === freshPage.length) {
+      freshPage.forEach((item) => excludedIds.add(item.id));
+      lastVisitTime = oldest;
+      continue;
+    }
+
+    lastVisitTime = oldest - 1;
+  }
+
+  return dedupeHistoryEntries(allResults);
+}
+
+function clampLimitedNumber(raw, limitKey) {
+  const entry = limitsMap[limitKey];
+  if (!entry) return Number(raw) || 0;
+  const { min, max } = entry;
+  const maxVal = max[1];
+  const num = Number(raw);
+  if (isNaN(num)) return min;
+  return Math.max(min, Math.min(maxVal, num));
+}
+function readLimitedNumber($el, limitKey) {
+  return clampLimitedNumber($el.val(), limitKey);
+}
+async function persistSearchForm() {
+  try {
+    const min = readLimitedNumber($searchMin, "searchMin");
+    const max = Math.max(min, readLimitedNumber($searchMax, "searchMax"));
+    const search = {
+      ...(config.search || {}),
+      desk: readLimitedNumber($searchDesk, "searchDesk"),
+      mob: readLimitedNumber($searchMob, "searchMob"),
+      min,
+      max,
+    };
+    await saveConfigMutation((next) => {
+      next.search = {
+        ...next.search,
+        ...search,
+      };
+    });
+    return { ...config.search };
+  } catch (err) {
+    config?.control?.log &&
+      log(
+        `[PERSIST] Failed to persist search form: ${err?.message || err}`,
+        "error",
+      );
+    return { ...(config.search || {}) };
+  }
+}
+async function persistScheduleForm() {
+  try {
+    const min = readLimitedNumber($scheduleMin, "scheduleMin");
+    const max = Math.max(min, readLimitedNumber($scheduleMax, "scheduleMax"));
+    const schedule = {
+      ...(config.schedule || {}),
+      desk: readLimitedNumber($scheduleDesk, "scheduleDesk"),
+      mob: readLimitedNumber($scheduleMob, "scheduleMob"),
+      min,
+      max,
+    };
+    await saveConfigMutation((next) => {
+      next.schedule = {
+        ...next.schedule,
+        ...schedule,
+      };
+    });
+    return { ...config.schedule };
+  } catch (err) {
+    config?.control?.log &&
+      log(
+        `[PERSIST] Failed to persist schedule form: ${err?.message || err}`,
+        "error",
+      );
+    return { ...(config.schedule || {}) };
+  }
+}
+$(document).ready(async function () {
+  $section.attr("hidden", true);
+  $("#search").removeAttr("hidden").show();
+  $version.val(chrome.runtime.getManifest().version);
+  $userManual.on("click", () => {
+    chrome.tabs.create({
+      url: "/Rewards Search Automator User Manual.pdf",
+    });
+  });
+
+  const scale = Math.min(screen.width, screen.height * (16 / 9)) / 1920;
+  $("body").css("--scale", `${scale}`);
+  await updateUI();
+
+  // Pick a random simulated device once if none is stored yet, then re-render.
+  if (!config?.device?.name) {
+    await resetDevice();
+    $deviceName.text(config?.device?.name || "");
+  }
+
+  const logs = config?.control?.log;
+  logs && log("[INIT] - UI initialized with scale: " + scale, "update");
+  $searchDesk.on("change", async function () {
+    const desk = readLimitedNumber($(this), "searchDesk");
+    await saveConfigMutation((next) => {
+      next.search.desk = desk;
+    });
+  });
+  $searchMob.on("change", async function () {
+    const mob = readLimitedNumber($(this), "searchMob");
+    await saveConfigMutation((next) => {
+      next.search.mob = mob;
+    });
+  });
+  $searchMin.on("change", async function () {
+    let val = readLimitedNumber($(this), "searchMin");
+    let range = Number($searchMax.val());
+    const patch = { min: val };
+    if (range < val * 1.5) {
+      range = clampLimitedNumber(Math.ceil(val * 1.5), "searchMax");
+      patch.max = range;
+    }
+    await saveConfigMutation((next) => {
+      Object.assign(next.search, patch);
+    });
+  });
+  $searchMax.on("change", async function () {
+    let val = readLimitedNumber($(this), "searchMax");
+    let range = Number($searchMin.val());
+    const patch = { max: val };
+    if (val < range * 1.5) {
+      range = clampLimitedNumber(Math.floor(val / 1.5), "searchMin");
+      patch.min = range;
+    }
+    await saveConfigMutation((next) => {
+      Object.assign(next.search, patch);
+    });
+  });
+  $searchModeA.on("click", async function () {
+    const mode = ($(this).attr("class") || "")
+      .split(/\s+/)
+      .find((c) => /^m\d$/.test(c));
+    const preset = SEARCH_MODE_PRESETS[mode];
+    if (preset) {
+      await saveConfigMutation((next) => {
+        next.search.desk = preset.desk;
+        next.search.mob = preset.mob;
+      });
+    }
+  });
+  $scheduleDesk.on("change", async function () {
+    const desk = readLimitedNumber($(this), "scheduleDesk");
+    await saveConfigMutation((next) => {
+      next.schedule.desk = desk;
+    });
+  });
+  $scheduleMob.on("change", async function () {
+    const mob = readLimitedNumber($(this), "scheduleMob");
+    await saveConfigMutation((next) => {
+      next.schedule.mob = mob;
+    });
+  });
+  $scheduleMin.on("change", async function () {
+    let val = readLimitedNumber($(this), "scheduleMin");
+    let range = Number($scheduleMax.val());
+    const patch = { min: val };
+    if (range < val * 1.5) {
+      range = clampLimitedNumber(Math.ceil(val * 1.5), "scheduleMax");
+      patch.max = range;
+    }
+    await saveConfigMutation((next) => {
+      Object.assign(next.schedule, patch);
+    });
+  });
+  $scheduleMax.on("change", async function () {
+    let val = readLimitedNumber($(this), "scheduleMax");
+    let range = Number($scheduleMin.val());
+    const patch = { max: val };
+    if (val < range * 1.5) {
+      range = clampLimitedNumber(Math.floor(val / 1.5), "scheduleMin");
+      patch.min = range;
+    }
+    await saveConfigMutation((next) => {
+      Object.assign(next.schedule, patch);
+    });
+  });
+  $scheduleModeA.on("click", async function () {
+    const mode = ($(this).attr("class") || "")
+      .split(/\s+/)
+      .find((c) => /^m\d$/.test(c));
+    if (!mode) return;
+    // NOTE: These buttons only control run frequency (Manual/Startup/~5min/~15min).
+    // They must not silently overwrite the Desktop/Mobile counts the user already set.
+    await saveConfigMutation((next) => {
+      next.schedule.mode = mode;
+    });
+    logs && log(`[SCHEDULE] - Schedule mode selected: ${mode}`, "update");
+  });
+  // Search and Schedule triggers share identical start/stop plumbing; only the
+  // start action, the form to persist, and the log label differ.
+  function makeRunTriggerHandler({ startAction, persistForm, logTag, label }) {
+    return async function () {
+      const $btn = $(this);
+      if ($btn.prop("disabled")) return;
+
+      const originalText = $btn.text();
+      $btn.prop("disabled", true);
+      _uiLocked = true;
+
+      try {
+        if (config?.runtime?.running) {
+          $btn.text("Stopping...");
+          const response = await sendMessageWithTimeout({
+            action: ACTIONS.STOP,
+          });
+          await flashStatus($btn, originalText, response);
+          logs &&
+            log(`[${logTag}] - ${label} stopped: ${originalText}`, "update");
+        } else {
+          $btn.text("Starting...");
+          const searches = await persistForm();
+          const response = await sendMessageWithTimeout({
+            action: startAction,
+            searches,
+          });
+          await flashStatus($btn, originalText, response);
+          logs &&
+            log(`[${logTag}] - ${label} started: ${originalText}`, "update");
+        }
+      } catch (err) {
+        logs &&
+          log(
+            `[${logTag}] Click handler error: ${err?.message || err}`,
+            "error",
+          );
+        await flashStatus($btn, originalText, false);
+      } finally {
+        _uiLocked = false;
+        $btn.prop("disabled", false);
+        await updateUI();
+      }
+    };
+  }
+  $searchTrigger.on(
+    "click",
+    makeRunTriggerHandler({
+      startAction: ACTIONS.START,
+      persistForm: persistSearchForm,
+      logTag: "SEARCH",
+      label: "Search",
+    }),
+  );
+  $scheduleTrigger.on(
+    "click",
+    makeRunTriggerHandler({
+      startAction: ACTIONS.SCHEDULE,
+      persistForm: persistScheduleForm,
+      logTag: "SCHEDULE",
+      label: "Schedule",
+    }),
+  );
+  $resetDevice.on("click", async function () {
+    await resetDevice();
+    logs && log(`[DEVICE] - Device reset`, "update");
+  });
+  $clear.on("change", async function () {
+    const clear = $(this).is(":checked") ? 1 : 0;
+    await saveConfigMutation((next) => {
+      next.control.clear = clear;
+    });
+    logs &&
+      log(
+        `[CONTROL] - Clear browsing data set to: ${config.control.clear}`,
+        "update",
+      );
+  });
+  $log.on("change", async function () {
+    const enableLog = $(this).is(":checked") ? 1 : 0;
+    await saveConfigMutation((next) => {
+      next.control.log = enableLog;
+    });
+    logs && log(`[CONTROL] - Log enabled: ${config.control.log}`, "update");
+  });
+  $niche.on("change", async function () {
+    const niche = $(this).val().trim() || "random";
+    await saveConfigMutation((next) => {
+      next.control.niche = niche;
+    });
+    logs && log(`[CONTROL] - Niche set to: ${config.control.niche}`, "update");
+  });
+  $activity.on("click", async function () {
+    const $btn = $(this);
+    if ($btn.prop("disabled")) return;
+    const $btnText = $btn.text();
+    $btn.prop("disabled", true);
+    _uiLocked = true;
+    try {
+      const response = await sendMessageWithTimeout({
+        action: ACTIONS.ACTIVITY,
+      });
+      await flashStatus($btn, $btnText, response);
+      logs &&
+        log(
+          `[ACTIVITY] - Activity started: ${response?.message ?? JSON.stringify(response)}`,
+          "update",
+        );
+    } catch (err) {
+      await flashStatus($btn, $btnText, false);
+    } finally {
+      _uiLocked = false;
+      $btn.prop("disabled", false);
+    }
+  });
+  $act.on("change", async function () {
+    const act = $(this).is(":checked") ? 1 : 0;
+    await saveConfigMutation((next) => {
+      next.control.act = act;
+    });
+    logs && log(`[CONTROL] - Act set to: ${config.control.act}`, "update");
+  });
+  $clearBrowsingData.on("click", async function () {
+    const $btn = $(this);
+    if ($btn.prop("disabled")) return;
+    const $btnText = $btn.text();
+    $btn.prop("disabled", true);
+    _uiLocked = true;
+    try {
+      const response = await sendMessageWithTimeout({
+        action: ACTIONS.CLEAR_BROWSING_DATA,
+      });
+      await flashStatus($btn, $btnText, response);
+      logs &&
+        log(
+          `[CLEAR BROWSING DATA] - Data cleared: ${response?.message ?? JSON.stringify(response)}`,
+          "update",
+        );
+    } catch (err) {
+      await flashStatus($btn, $btnText, false);
+    } finally {
+      _uiLocked = false;
+      $btn.prop("disabled", false);
+    }
+  });
+  $simulate.on("click", async function () {
+    const $btn = $(this);
+    if ($btn.prop("disabled")) return;
+    const $btnText = $btn.text();
+    $btn.prop("disabled", true);
+    _uiLocked = true;
+    try {
+      const response = await sendMessageWithTimeout({
+        action: ACTIONS.SIMULATE,
+      });
+      await flashStatus($btn, $btnText, response);
+      logs &&
+        log(
+          `[SIMULATE] - Simulation started: ${response?.message ?? JSON.stringify(response)}`,
+          "update",
+        );
+    } catch (err) {
+      await flashStatus($btn, $btnText, false);
+    } finally {
+      _uiLocked = false;
+      $btn.prop("disabled", false);
+    }
+  });
+  $download.on("click", async function () {
+    const $btn = $(this);
+    if ($btn.prop("disabled")) return;
+    const $btnText = $btn.text();
+    $btn.prop("disabled", true);
+    try {
+      const results = await fetchBingHistoryLast24Hours();
+      const blob = new Blob([JSON.stringify(results, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `[Rewards_Search_Automator]_bing_search_history_${new Date().toISOString()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      a.remove();
+      await flashStatus($btn, $btnText, true);
+      logs &&
+        log(
+          `[DOWNLOAD] - Search history downloaded: ${results.length} entries`,
+          "update",
+        );
+    } catch (error) {
+      await flashStatus($btn, $btnText, false);
+      log(
+        `[DOWNLOAD] - Error downloading search history: ${error?.message}`,
+        "error",
+      );
+    } finally {
+      $btn.prop("disabled", false);
+    }
+  });
+  $delete.on("click", async function () {
+    const $btn = $(this);
+    if ($btn.prop("disabled")) return;
+    const $btnText = $btn.text();
+    $btn.prop("disabled", true);
+    try {
+      const results = await fetchBingHistoryLast24Hours();
+      const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+      const uniqueUrls = [
+        ...new Set(results.map((item) => item.url).filter(Boolean)),
+      ];
+      for (const url of uniqueUrls) {
+        await new Promise((resolve, reject) => {
+          chrome.history.deleteUrl({ url }, () => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            resolve();
+          });
+        });
+      }
+      await flashStatus($btn, $btnText, true);
+      logs &&
+        log(
+          `[DELETE] - Removed ${uniqueUrls.length} Bing URLs from history (last 24h window: ${oneDayAgo}-${Date.now()}). Older visits for the same URLs may also be removed by Chrome.`,
+          "update",
+        );
+    } catch (error) {
+      await flashStatus($btn, $btnText, false);
+      log(
+        `[DELETE] - Error deleting search history: ${error?.message}`,
+        "error",
+      );
+    } finally {
+      $btn.prop("disabled", false);
+    }
+  });
+  $downloadCrashLog.on("click", async function () {
+    const $btn = $(this);
+    if ($btn.prop("disabled")) return;
+    const $btnText = $btn.text();
+    $btn.prop("disabled", true);
+    try {
+      const text = await exportCrashLogText();
+      const blob = new Blob([text], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `[Rewards_Search_Automator]_crash_log_${new Date().toISOString()}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+      a.remove();
+      await flashStatus($btn, $btnText, true);
+      logs && log(`[CRASH LOG] - Crash log downloaded.`, "update");
+    } catch (error) {
+      await flashStatus($btn, $btnText, false);
+      log(
+        `[CRASH LOG] - Error downloading crash log: ${error?.message}`,
+        "error",
+      );
+    } finally {
+      $btn.prop("disabled", false);
+    }
+  });
+  $clearCrashLog.on("click", async function () {
+    const $btn = $(this);
+    if ($btn.prop("disabled")) return;
+    const $btnText = $btn.text();
+    $btn.prop("disabled", true);
+    try {
+      await clearCrashLog();
+      await flashStatus($btn, $btnText, true);
+      logs && log(`[CRASH LOG] - Crash log cleared.`, "update");
+    } catch (error) {
+      await flashStatus($btn, $btnText, false);
+      log(`[CRASH LOG] - Error clearing crash log: ${error?.message}`, "error");
+    } finally {
+      $btn.prop("disabled", false);
+    }
+  });
+  $runtime.on("click", async function () {
+    const $btn = $(this);
+    if ($btn.prop("disabled")) return;
+    const $btnText = $btn.text();
+    $btn.prop("disabled", true);
+    try {
+      const stopped = await stopActiveRunIfNeeded();
+      if (!stopped) {
+        await flashStatus($btn, $btnText, false);
+        log(`[RUNTIME] - Stop timed out; runtime not reset.`, "error");
+        return;
+      }
+      await saveConfigMutation((next) => {
+        next.runtime.done = 0;
+        next.runtime.total = 0;
+        next.runtime.failed = 0;
+        next.runtime.mobile = 0;
+        next.runtime.act = 0;
+        next.runtime.running = 0;
+        next.runtime.mode = null;
+        next.runtime.currentSession = null;
+        next.runtime.currentPhase = null;
+        next.runtime.rsaTab = null;
+      });
+      await flashStatus($btn, $btnText, true);
+      logs && log(`[RUNTIME] - Runtime reset.`, "update");
+    } finally {
+      $btn.prop("disabled", false);
+    }
+  });
+  $reset.on("click", async function () {
+    const $btn = $(this);
+    if ($btn.prop("disabled")) return;
+    const $btnText = $btn.text();
+    $btn.prop("disabled", true);
+    const stopped = await stopActiveRunIfNeeded();
+    if (!stopped) {
+      await flashStatus($btn, $btnText, false);
+      log(`[RESET] - Stop timed out; extension not reset.`, "error");
+      $btn.prop("disabled", false);
+      return;
+    }
+    await chrome.storage.local.remove("config");
+    await flashStatus($btn, $btnText, true);
+    logs && log(`[RESET] - Extension config reset.`, "update");
+    location.reload();
+  });
+});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && (changes.config || changes.activityMemory)) {
+    scheduleUIUpdate();
+  }
+});

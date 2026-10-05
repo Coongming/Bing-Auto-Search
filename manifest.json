@@ -1,55 +1,52 @@
 {
-	"manifest_version": 3,
-	"author": "buildwithkt.dev",
-	"name": "Search Auto",
-	"short_name": "RSA",
-	"version": "2.0",
-	"description": "Rewards Search Automator - Automate daily Bing searches for Microsoft Rewards and mobile points with device simulation.",
-	"action": {
-		"default_popup": "/popup.html",
-		"default_icon": {
-			"16": "/logo/16.png",
-			"48": "/logo/48.png",
-			"128": "/logo/128.png"
-		}
-	},
-	"icons": {
-		"16": "/logo/16.png",
-		"48": "/logo/48.png",
-		"128": "/logo/128.png"
-	},
-	"background": {
-		"service_worker": "/js/service.js",
-		"type": "module"
-	},
-	"content_scripts": [
-		{
-			"matches": [
-				"*://*.bing.com/*"
-			],
-			"js": [
-				"/js/content.js"
-			]
-		}
-	],
-	"permissions": [
-		"tabs",
-		"storage",
-		"alarms",
-		"browsingData",
-		"webNavigation",
-		"history",
-		"debugger"
-	],
-	"optional_permissions": [
-		"webRequest",
-		"scripting"
-	],
-	"host_permissions": [
-		"<all_urls>"
-	],
-	"update_url": "https://clients2.google.com/service/update2/crx",
-	"minimum_chrome_version": "102",
-	"homepage_url": "https://buildwithkt.dev",
-	"offline_enabled": false
+  "manifest_version": 3,
+  "name": "Search Auto",
+  "short_name": "RSA",
+  "version": "2.0.2",
+  "description": "Rewards Search Automator - Automate daily Bing searches for Microsoft Rewards and mobile points with device simulation.",
+  "action": {
+    "default_popup": "/popup.html",
+    "default_icon": {
+      "16": "/logo/16.png",
+      "48": "/logo/48.png",
+      "128": "/logo/128.png"
+    }
+  },
+  "icons": {
+    "16": "/logo/16.png",
+    "48": "/logo/48.png",
+    "128": "/logo/128.png"
+  },
+  "background": {
+    "service_worker": "/js/service.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.bing.com/*"],
+      "js": ["/js/content.js"]
+    }
+  ],
+  "permissions": [
+    "tabs",
+    "storage",
+    "alarms",
+    "browsingData",
+    "history",
+    "debugger",
+    "cookies",
+    "downloads"
+  ],
+  "host_permissions": [
+    "*://*.bing.com/*",
+    "*://rewards.bing.com/*",
+    "*://login.live.com/*",
+    "*://login.microsoftonline.com/*",
+    "*://account.microsoft.com/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self';"
+  },
+  "minimum_chrome_version": "111",
+  "offline_enabled": false
 }
