@@ -46,6 +46,26 @@ export function sumCounterProgress(counters) {
   return total;
 }
 
+// Missing counters are unknown, not a zero-point mobile balance.
+export function buildSearchCounterSnapshot(userStatus) {
+  const counters = userStatus?.counters || {};
+  const read = (name, field) => {
+    const item = Array.isArray(counters[name]) ? counters[name][0] : null;
+    const value = item?.attributes?.[field] ?? item?.[field];
+    if (value == null || value === "" || typeof value === "boolean")
+      return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  };
+  return {
+    pcProgress: read("pcSearch", "progress"),
+    pcMax: read("pcSearch", "max"),
+    mobProgress: read("mobileSearch", "progress"),
+    mobMax: read("mobileSearch", "max"),
+    counterNames: Object.keys(counters).slice(0, 20),
+  };
+}
+
 // Build the score snapshot used to detect whether an activity click actually
 // earned points. Pure: takes the parsed userStatus object.
 export function buildRewardsSnapshot(userStatus) {

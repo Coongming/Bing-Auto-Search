@@ -5,8 +5,40 @@ const {
   getCounterValue,
   sumCounterProgress,
   buildRewardsSnapshot,
+  buildSearchCounterSnapshot,
   getScoreDelta,
 } = loadEsmModule("../js/rewards-metrics.js");
+
+describe("search counter diagnostics", () => {
+  test("reads progress and limits without conflating the PC and mobile counters", () => {
+    expect(
+      buildSearchCounterSnapshot({
+        counters: {
+          pcSearch: [{ attributes: { progress: 150, max: 150 } }],
+          mobileSearch: [{ progress: "0", max: "60" }],
+        },
+      }),
+    ).toEqual({
+      pcProgress: 150,
+      pcMax: 150,
+      mobProgress: 0,
+      mobMax: 60,
+      counterNames: ["pcSearch", "mobileSearch"],
+    });
+  });
+  test("missing or malformed mobile data is unknown rather than zero points", () => {
+    expect(
+      buildSearchCounterSnapshot({
+        counters: { pcSearch: [{ progress: 3, max: 150 }] },
+      }).mobProgress,
+    ).toBeNull();
+    expect(
+      buildSearchCounterSnapshot({
+        counters: { mobileSearch: [{ progress: false, max: "bad" }] },
+      }),
+    ).toMatchObject({ mobProgress: null, mobMax: null });
+  });
+});
 
 describe("findFirstNumberByKey", () => {
   test("finds a top-level numeric value by case-insensitive key", () => {

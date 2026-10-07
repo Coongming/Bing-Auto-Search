@@ -40,7 +40,11 @@ import {
   readRewardsUserStatus,
   createActivityScanTracker,
 } from "/js/activity-runtime.js";
-import { buildRewardsSnapshot, getScoreDelta } from "/js/rewards-metrics.js";
+import {
+  buildRewardsSnapshot,
+  buildSearchCounterSnapshot,
+  getScoreDelta,
+} from "/js/rewards-metrics.js";
 import {
   sanitizeActivityAttempts,
   getBlockedActivityKeys,
@@ -519,7 +523,11 @@ async function armScheduleAlarm(mode = config?.schedule?.mode) {
 async function checkRewardsApiSession() {
   try {
     return Boolean(await readRewardsUserStatus());
-  } catch {
+  } catch (error) {
+    diagnosticLog(
+      `[REWARDS] Account API read failed: ${error.message}`,
+      "warning",
+    );
     return false;
   }
 }
@@ -673,13 +681,16 @@ async function fetchRewardsSnapshot() {
     const status = await readRewardsUserStatus();
     return status ? buildRewardsSnapshot(status) : null;
   } catch (error) {
-    logs &&
-      log(
-        `[ACTIVITY] Could not read Rewards score: ${error.message}`,
-        "warning",
-      );
+    diagnosticLog(
+      `[ACTIVITY] Could not read Rewards score: ${error.message}`,
+      "warning",
+    );
     return null;
   }
+}
+
+async function fetchSearchCounterSnapshot() {
+  return buildSearchCounterSnapshot(await readRewardsUserStatus());
 }
 
 // Run generation counter — incremented each new session.
@@ -3505,9 +3516,11 @@ async function initialise(searches, expectedSessionId = null) {
         delayFn: delay,
         shortestDelay,
         detachFn: detach,
+        readSearchCountersFn: fetchSearchCounterSnapshot,
       },
     );
 
+    if (!isSessionStillActive(expectedSessionId)) return false;
     config.runtime.currentPhase = "post_search";
     await set(config);
 

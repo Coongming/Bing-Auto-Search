@@ -1,6 +1,20 @@
-# So sánh Bing 2.0 / 4.0 / 6.0 và bản sửa 6.0.4
+# So sánh Bing 2.0 / 4.0 / 6.0 và bản sửa 6.0.5
 
-Đã sửa lỗi khởi chạy trong thư mục **Bing 6.0**, đổi manifest thành **6.0.4**. Hai nguyên nhân chính là popup yêu cầu consent mà worker đã xóa và chờ quảng cáo trước khi gắn handler cho nút. Không cần đăng nhập Google để chạy extension trên profile Chrome mới.
+Đã sửa lỗi khởi chạy trong thư mục **Bing 6.0**, đổi manifest thành **6.0.5**. Hai nguyên nhân chính là popup yêu cầu consent mà worker đã xóa và chờ quảng cáo trước khi gắn handler cho nút. Không cần đăng nhập Google để chạy extension trên profile Chrome mới.
+
+## Bổ sung ở 6.0.5: timeout 4 giây và chẩn đoán điểm mobile
+
+Log `diag-2026-10-07T04-33-47-465Z-run.txt` của bản 6.0.4 ghi 1 PC + 21 mobile, tổng 22 lượt gửi, 0 lỗi; mobile giả lập hoàn tất và ACT nhận Microsoft session active. Daily set xử lý ba thẻ, Keep earning xử lý Quote of the day. Tuy nhiên mọi chênh lệch điểm đều `null`, và log chưa đọc PC/mobile counter nên chưa xác định được các lượt mobile được cộng vào counter nào hoặc không được cộng.
+
+Theo yêu cầu người dùng, request Rewards giới hạn **4 giây**, bao gồm cả HTTP và JSON body; timeout abort request và dọn timer. Reader 6.0 trước đây chỉ lấy `status.userStatus`; bổ sung `dashboard.userStatus` đã được reader 4.0 hỗ trợ. API không có dữ liệu hợp lệ giờ báo rõ cấu trúc phản hồi thay vì trả null im lặng; không ghi giá trị tài khoản/cookie vào log.
+
+Ghi counter PC/mobile trước và sau mobile, gồm progress, max, tên counter và chênh lệch. Nếu thiếu counter hoặc request lỗi, ghi unknown/lý do lỗi. Không sửa số lượt cấu hình, không tự áp quota hoặc khôi phục cơ chế dừng mobile của 4.0. Chưa thể khẳng định đã sửa việc Microsoft cộng điểm cho lượt mobile; cần counter từ lượt chạy thực tế.
+
+Log cũng ghi ACT click nhầm Today's points / Points breakdown bốn lần, retry và chờ điểm không cần thiết. Scanner Keep earning giờ bỏ qua mục thống kê này, vẫn chọn thẻ Quote of the day có +5.
+
+Kiểm thử bao gồm deadline 4 giây và JSON treo, parser hai dạng API, dữ liệu không hợp lệ, counter thiếu là unknown, PC tăng mà mobile không tăng, API lỗi không làm đổi kế hoạch search và bỏ qua mục thống kê. Tổng **410/410 test**, 24 suite; cú pháp 55 file, lint đạt.
+
+Thông tin từ [Microsoft Support](https://support.microsoft.com/en-us/accounts-billing/rewards/learn-about-microsoft-rewards): không cộng điểm có thể liên quan tài khoản/đồng bộ dữ liệu, counter đạt giới hạn, truy vấn tự động hoặc thị trường. Đây là các khả năng để đối chiếu, chưa phải kết luận về tài khoản của người dùng.
 
 ## Bổ sung ở 6.0.4: giữ đăng nhập qua PC → mobile → ACT
 
@@ -48,11 +62,11 @@ Chưa xác nhận DOM hoặc log của tài khoản đang gặp lỗi ngoài Chr
 
 Đối chiếu cây mã của `Bing 2.0 goc`, `Bing 4.0 van` và `Bing 6.0`: manifest, popup/HTML/CSS, worker, content script, module cấu hình/lưu trữ, session, schedule, search, activity, cookie, debugger và catalog từ khóa. Thư viện đóng gói và catalog được kiểm tra theo cách chúng được nạp/sử dụng; không coi chạy test là kiểm toán mọi byte của thư viện minify. `Bing_Script` là ứng dụng riêng, ngoài phạm vi này.
 
-Tên thư mục không khớp manifest ban đầu: 2.0 ghi `2.0`, 4.0 ghi `2.0.2`, 6.0 cũng ghi `2.0`. Bản sửa ghi `6.0.4` để nhận diện đúng sau khi reload.
+Tên thư mục không khớp manifest ban đầu: 2.0 ghi `2.0`, 4.0 ghi `2.0.2`, 6.0 cũng ghi `2.0`. Bản sửa ghi `6.0.5` để nhận diện đúng sau khi reload.
 
 ## Khác biệt giữa ba bản
 
-| Nội dung               | 2.0 gốc                                                | 4.0                                                                                     | 6.0 trước sửa / 6.0.4                                                                                                     |
+| Nội dung               | 2.0 gốc                                                | 4.0                                                                                     | 6.0 trước sửa / 6.0.5                                                                                                     |
 | ---------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | Tổ chức mã             | 10 file JS, phần lớn logic trong worker/popup.         | 28 file JS, tách cấu hình, session, search, activity, schedule và storage.              | Ban đầu 28 file JS, bản sửa có 29; worker kế thừa nhiều module 4.0, popup cũ giống 2.0. Bản sửa đồng bộ popup với worker. |
 | Chrome tối thiểu       | 102.                                                   | 111.                                                                                    | 111.                                                                                                                      |
@@ -60,7 +74,7 @@ Tên thư mục không khớp manifest ban đầu: 2.0 ghi `2.0`, 4.0 ghi `2.0.2
 | Popup                  | Luồng consent/Pro/quảng cáo cũ.                        | Canonical defaults, mutation storage, phản hồi worker có timeout.                       | Còn kiểm tra consent/Pro, chờ quảng cáo, ghi cả config. Bản sửa dùng defaults/mutation/timeout, giữ preset 6.0.           |
 | Đọc Rewards            | Luồng cũ trong worker.                                 | `rewards-client.js` đọc qua tab Rewards.                                                | Không có module đó; fetch Rewards API trong worker cho activity/score.                                                    |
 | Daily search counter   | Luồng cũ.                                              | Kiểm tra counter và giảm kế hoạch khi daily quota hoàn tất.                             | Refresh counter bị vô hiệu hóa; chạy theo số lượt cấu hình. Giữ hành vi này trong bản sửa.                                |
-| Xác nhận điểm mobile   | Không có module guard riêng như 4.0.                   | `mobile-credit.js` kiểm tra điểm thực tế.                                               | Module này bị bỏ; xác nhận search không đồng nghĩa xác nhận điểm mobile.                                                  |
+| Xác nhận điểm mobile   | Không có module guard riêng như 4.0.                   | `mobile-credit.js` kiểm tra điểm thực tế.                                               | 6.0.5 ghi counter trước/sau mobile; giữ số lượt cấu hình. Gửi search không đồng nghĩa nhận điểm.                          |
 | Retry khi startup      | Luồng cũ.                                              | `startup-retry.js` lưu trạng thái retry qua worker restart.                             | Module retry riêng bị bỏ. Báo lỗi khởi động rõ hơn, chưa khôi phục retry của 4.0.                                         |
 | Cookie ở luồng tự động | Luồng clear cũ.                                        | Luồng tự động giữ dữ liệu xác thực.                                                     | Bản cũ backup/xóa/restore cookie; 6.0.4 giữ auth trong mọi clear tự động. Vẫn phục hồi snapshot cũ khi khởi động.         |
 | Nhóm từ khóa           | anime, education, movie, music, random, tech, travel.  | finance, food, gaming, health, history, nature, random, science, sports, tech, vietnam. | Cùng bộ dữ liệu như 4.0; popup cũ còn một số nhóm 2.0. Bản sửa đồng bộ danh sách.                                         |
@@ -100,7 +114,7 @@ Bản sửa đưa `RunCoordinator.canStartNewRun()` lên trước thay đổi co
 - `js/popup.js`: đồng bộ defaults/message, lưu form lúc bấm, mutation storage, khóa click trùng, timeout 20 giây, xử lý lỗi/trạng thái worker. Stop chỉ hiện trên nút sở hữu phiên.
 - `js/service.js`: kiểm tra Schedule trước khi sửa lịch; lưu trạng thái bắt đầu/chạy/dừng/lỗi/kết quả. Popup nhận được lỗi offline hoặc attach debugger sau khi worker đã nhận Start.
 - `popup.html`, `css/popup.css`: thêm trạng thái dưới nút, đồng bộ niche/preset, bỏ setting backup Rewards login cũ; thêm nút tải/xóa crash log.
-- `manifest.json`: phiên bản `6.0.4`.
+- `manifest.json`: phiên bản `6.0.5`.
 - `eslint.config.js`: loại vendor bundle `js/stats.js` khỏi lint. Worker 6.0 không import bundle này; giữ nguyên nội dung minify.
 - Xóa mã daily-counter không thể chạy sau `return` và nhánh kiểm tra giả `countersRefreshed = true`; ghi rõ hành vi configured count, giữ chính sách đếm lượt 6.0.
 - Cập nhật README và bổ sung test thực thi luồng popup/worker.
@@ -127,7 +141,7 @@ Chrome phải đang chạy để alarm thực thi. Stop dừng phiên và giữ 
 | 4.0 trước sửa                                    | 389/389 test, 25/25 suite đạt.                                                                                                       |
 | 6.0 ban đầu                                      | 336/350 test đạt; 14 test thất bại trong 3 suite. Một phần là fixture/assertion cũ không khớp 6.0, không tương đương 14 lỗi độc lập. |
 | Nhóm regression popup ban đầu chạy trên popup cũ | 9/10 thất bại, tái hiện lỗi nút và các lỗi liên quan.                                                                                |
-| 6.0.4, toàn bộ suite sau sửa                     | **400/400 test, 24/24 suite đạt**.                                                                                                   |
+| 6.0.5, toàn bộ suite sau sửa                     | **410/410 test, 24/24 suite đạt**.                                                                                                   |
 | Kiểm tra cú pháp                                 | **55 file đạt**.                                                                                                                     |
 | `npm run lint`                                   | **Đạt**.                                                                                                                             |
 
@@ -139,7 +153,7 @@ Assertion cũ được cập nhật theo dữ liệu/hành vi 6.0: union niche g
 
 ## Xác nhận trên Chrome của người dùng
 
-1. Mở `chrome://extensions`, reload đúng extension từ **Bing 6.0**, xác nhận **6.0.4**.
+1. Mở `chrome://extensions`, reload đúng extension từ **Bing 6.0**, xác nhận **6.0.5**.
 2. Mở lại popup, chọn `Desktop = 1`, `Mobile = 0`, bấm Search.
 3. Xác nhận nút thành Stop, có trạng thái và tab Bing mở. Thử Schedule với Manual Only và cùng số lượt.
 4. Để kiểm tra điểm/activity, đăng nhập Microsoft trên Bing/Rewards và xem dashboard.

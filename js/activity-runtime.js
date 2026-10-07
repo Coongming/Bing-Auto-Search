@@ -1,4 +1,27 @@
-export const REWARDS_REQUEST_TIMEOUT_MS = 8000;
+export const REWARDS_REQUEST_TIMEOUT_MS = 4000;
+
+export function extractRewardsUserStatus(data) {
+  for (const status of [
+    data?.status?.userStatus,
+    data?.dashboard?.userStatus,
+  ]) {
+    if (
+      status &&
+      typeof status === "object" &&
+      !Array.isArray(status) &&
+      status.isRewardsUser !== false
+    )
+      return status;
+  }
+  // Log structure only, never the account payload or authentication values.
+  const keys =
+    Object.keys(data || {})
+      .slice(0, 12)
+      .join(", ") || "none";
+  throw new Error(
+    `Rewards response has no usable userStatus (response keys: ${keys}).`,
+  );
+}
 
 // Bound both the HTTP request and JSON body. A stalled Rewards API must not
 // keep the activity engine busy forever after the last card was clicked.
@@ -27,7 +50,7 @@ export async function readRewardsUserStatus({
         );
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
-        return data?.status?.userStatus || null;
+        return extractRewardsUserStatus(data);
       })(),
       deadline,
     ]);

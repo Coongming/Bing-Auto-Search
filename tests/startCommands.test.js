@@ -33,7 +33,9 @@ describe("real service worker module graph and Chrome event entry points", () =>
     });
     expect(result.config.control.log).toBe(0);
     expect(result.diagnosticDownloads).toHaveLength(1);
-    expect(result.diagnosticDownloads[0]).toContain("# version: 6.0.4");
+    expect(result.diagnosticDownloads[0]).toContain(
+      `# version: ${require("../manifest.json").version}`,
+    );
     expect(result.diagnosticDownloads[0]).toContain(
       "Microsoft session: active",
     );

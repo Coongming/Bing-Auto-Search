@@ -15,9 +15,30 @@ export async function runSearchPhases(
     delayFn,
     shortestDelay,
     detachFn,
+    readSearchCountersFn,
   } = deps;
 
   let searchPhasesSuccessful = true;
+
+  const readCounters = async (stage) => {
+    if (!readSearchCountersFn) return null;
+    try {
+      const snapshot = await readSearchCountersFn();
+      if (!snapshot) throw new Error("Account counters unavailable.");
+      const value = (n) => (Number.isFinite(n) ? n : "unknown");
+      log(
+        `[MOBILE_POINTS] ${stage}: PC=${value(snapshot.pcProgress)}/${value(snapshot.pcMax)}, mobile=${value(snapshot.mobProgress)}/${value(snapshot.mobMax)}, counters=${(snapshot.counterNames || []).join(",") || "none"}.`,
+        "update",
+      );
+      return snapshot;
+    } catch (error) {
+      log(
+        `[MOBILE_POINTS] ${stage}: cannot read Rewards counters: ${error.message}`,
+        "warning",
+      );
+      return null;
+    }
+  };
 
   // Helper to update runtime state in-memory + persist to storage once
   const updatePhase = async (phase, extra = {}) => {
@@ -83,6 +104,8 @@ export async function runSearchPhases(
         log(`[SEARCH] - Simulating mobile environment...`, "update");
         await delayFn(shortestDelay, true);
 
+        const mobileBefore = await readCounters("Before mobile searches");
+        if (!isSessionStillActive(expectedSessionId)) return false;
         await updatePhase("mobile_search");
 
         const mobileOk = await searchFn(
@@ -97,7 +120,23 @@ export async function runSearchPhases(
             "warning",
           );
         } else {
-          log(`[SEARCH] - Mobile searches completed.`, "success");
+          log(`[SEARCH] - Requested mobile searches submitted.`, "success");
+        }
+
+        if (isSessionStillActive(expectedSessionId) && readSearchCountersFn) {
+          const mobileAfter = await readCounters("After mobile searches");
+          if (!isSessionStillActive(expectedSessionId)) return false;
+          const delta = (key) =>
+            Number.isFinite(mobileBefore?.[key]) &&
+            Number.isFinite(mobileAfter?.[key])
+              ? mobileAfter[key] - mobileBefore[key]
+              : null;
+          const mobileDelta = delta("mobProgress");
+          const pcDelta = delta("pcProgress");
+          log(
+            `[MOBILE_POINTS] Counter change during mobile: mobile=${mobileDelta ?? "unknown"}, PC=${pcDelta ?? "unknown"}. Submitted searches do not confirm mobile points.`,
+            mobileDelta > 0 ? "success" : "warning",
+          );
         }
 
         if (getConfig()?.control?.clear && getConfig()?.runtime?.running) {
@@ -132,7 +171,11 @@ export async function runSearchPhases(
           await detachFn?.(tabId, false);
         } catch (e) {}
         const cfg = getConfig();
-        if (cfg.runtime.mobile) {
+        const currentSessionId = cfg.runtime.currentSession?.id;
+        if (
+          cfg.runtime.mobile &&
+          (!currentSessionId || currentSessionId === expectedSessionId)
+        ) {
           cfg.runtime.mobile = 0;
           // SAFETY: getConfig() returns the same object reference the coordinator
           // already mutated (running=0 etc.), so this write won't re-enable running.

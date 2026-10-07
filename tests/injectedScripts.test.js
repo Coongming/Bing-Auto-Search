@@ -163,6 +163,20 @@ describe("createDashboardActivityScript", () => {
 });
 
 describe("createEarnActivityScript", () => {
+  test("does not mistake Today's points / Points breakdown for an earning activity", () => {
+    activityFixture(
+      "Keep earning",
+      '<a class="earn-card" href="https://rewards.bing.com/earn#points-breakdown">Today\'s points 117 Points breakdown</a><a class="earn-card" href="https://rewards.bing.com/quote">Quote of the day +5</a>',
+    );
+    const result = new Function(
+      "return (" + createEarnActivityScript([], 1, true) + ")",
+    )();
+    expect(result.clicked).toHaveLength(1);
+    expect(result.clicked[0].text).toContain("Quote of the day");
+    expect(
+      result.skipped.some((item) => item.reason === "points summary"),
+    ).toBe(true);
+  });
   test("defers the selected Keep earning card to CDP without clicking it during the scan", () => {
     activityFixture(
       "Keep earning",

@@ -406,6 +406,9 @@ export function createEarnActivityScript(
 			};
 			const skipReasonFor = (el) => {
 				const txt = textOf(el).toLowerCase();
+				if (/^(today['’]s points|điểm hôm nay)/i.test(txt) && /points breakdown|chi tiết điểm|phân tích điểm/i.test(txt)) {
+					return 'points summary';
+				}
 				if (/silver level required|gold level required|level required|required|not eligible|locked|yêu cầu cấp|yêu cầu trình độ|bị khóa/i.test(txt)) {
 					return 'required or locked';
 				}

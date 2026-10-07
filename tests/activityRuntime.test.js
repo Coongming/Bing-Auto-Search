@@ -13,18 +13,51 @@ function runtime() {
 describe("bounded Rewards activity requests", () => {
   afterEach(() => jest.useRealTimers());
 
+  test("reads dashboard.userStatus responses as well as the legacy status shape", async () => {
+    const status = {
+      availablePoints: 42,
+      counters: { mobileSearch: [{ progress: 3, max: 60 }] },
+    };
+    await expect(
+      runtime().readRewardsUserStatus({
+        fetchFn: async () => ({
+          ok: true,
+          json: async () => ({ dashboard: { userStatus: status } }),
+        }),
+      }),
+    ).resolves.toEqual(status);
+  });
+
+  test.each([null, [], { isRewardsUser: false }])(
+    "rejects unusable account responses instead of silently returning null: %s",
+    async (userStatus) => {
+      await expect(
+        runtime().readRewardsUserStatus({
+          fetchFn: async () => ({
+            ok: true,
+            json: async () => ({
+              status: { userStatus },
+              secret: "never log this value",
+            }),
+          }),
+        }),
+      ).rejects.toThrow("no usable userStatus (response keys: status, secret)");
+    },
+  );
+
   test("aborts and returns when the API never responds", async () => {
     jest.useFakeTimers();
     let signal;
     const request = runtime().readRewardsUserStatus({
-      timeoutMs: 8000,
       fetchFn: (_url, options) => {
         signal = options.signal;
         return new Promise(() => {});
       },
     });
-    const check = expect(request).rejects.toThrow("timed out");
-    await jest.advanceTimersByTimeAsync(8000);
+    const check = expect(request).rejects.toThrow("timed out after 4000ms");
+    await jest.advanceTimersByTimeAsync(3999);
+    expect(signal.aborted).toBe(false);
+    await jest.advanceTimersByTimeAsync(1);
     await check;
     expect(signal.aborted).toBe(true);
     expect(jest.getTimerCount()).toBe(0);
@@ -33,11 +66,10 @@ describe("bounded Rewards activity requests", () => {
   test("also bounds a hanging JSON response body", async () => {
     jest.useFakeTimers();
     const request = runtime().readRewardsUserStatus({
-      timeoutMs: 8000,
       fetchFn: async () => ({ ok: true, json: () => new Promise(() => {}) }),
     });
     const check = expect(request).rejects.toThrow("timed out");
-    await jest.advanceTimersByTimeAsync(8000);
+    await jest.advanceTimersByTimeAsync(4000);
     await check;
   });
 

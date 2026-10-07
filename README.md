@@ -1,17 +1,19 @@
-# Search Auto — Bing 6.0.4
+# Search Auto — Bing 6.0.5
 
-Bản 6.0.4 sửa lỗi bấm **Search/Start** hoặc **Schedule** không chạy: popup còn kiểm tra trường consent đã bị worker loại bỏ, đồng thời chờ tải quảng cáo trước khi gắn sự kiện. Bản sửa lưu đúng giá trị đang nhập, bảo vệ trạng thái phiên chạy và hiển thị lỗi ngay dưới nút.
+Bản 6.0.5 sửa lỗi bấm **Search/Start** hoặc **Schedule** không chạy: popup còn kiểm tra trường consent đã bị worker loại bỏ, đồng thời chờ tải quảng cáo trước khi gắn sự kiện. Bản sửa lưu đúng giá trị đang nhập, bảo vệ trạng thái phiên chạy và hiển thị lỗi ngay dưới nút.
+
+Bản 6.0.5 đổi timeout Rewards xuống 4 giây, đọc cả hai dạng `status.userStatus` / `dashboard.userStatus`, ghi counter trước/sau mobile và bỏ qua mục Today’s points / Points breakdown khi chạy Keep earning.
 
 Xem [báo cáo so sánh 2.0 / 4.0 / 6.0 và kết quả kiểm thử](COMPARISON_FIX_REPORT.vi.md).
 
-Bản 6.0.4 sửa thêm Daily set/Keep earning bị bỏ qua do dấu hoàn thành của thẻ bên cạnh hoặc class `incomplete`. Nút Perform có Stop riêng và activity kiểm tra session để dừng an toàn khi khởi chạy lại.
+Bản 6.0.5 sửa thêm Daily set/Keep earning bị bỏ qua do dấu hoàn thành của thẻ bên cạnh hoặc class `incomplete`. Nút Perform có Stop riêng và activity kiểm tra session để dừng an toàn khi khởi chạy lại.
 
 ## 1. Cài hoặc cập nhật trên Chrome
 
 1. Mở `chrome://extensions`, bật **Developer mode**.
 2. Nếu chưa cài, chọn **Load unpacked** và chọn chính thư mục **Bing 6.0** chứa `manifest.json`.
 3. Nếu đã cài từ thư mục này, bấm **Reload** trên extension **Search Auto**.
-4. Kiểm tra phiên bản **6.0.4**, rồi đóng và mở lại popup.
+4. Kiểm tra phiên bản **6.0.5**, rồi đóng và mở lại popup.
 5. Trong **Search**, chọn `1 - 0`, bấm **Search**. Nút sẽ thành **Stop**, có trạng thái dưới nút và worker mở tab Bing.
 
 Chrome tối thiểu theo manifest là 111. Extension không cần đăng nhập Google trên profile Chrome. Để nhận điểm Rewards hoặc chạy Daily set / Keep earning, cần đăng nhập Microsoft trên Bing/Rewards.
@@ -60,7 +62,7 @@ Bản 6.0 đọc dữ liệu activity qua Rewards API. Nếu search chạy nhưn
 
 Click một thẻ chưa phải kết thúc toàn bộ ACT. Tool vẫn có thể đang trả lời quiz, chờ điểm hoặc xử lý bước kế tiếp.
 
-Từ 6.0.3, mỗi request Rewards API có timeout 8 giây, gồm cả đọc JSON. Lượt quét không có thẻ không chờ điểm và không gọi API điểm. Sau hai lượt quét trống, tool chuyển bước; retry cuộn đứng yên hai lần cũng dừng quét vùng đó. Tool vẫn cho phép cuộn đến vị trí mới và thử lại thẻ chưa xác nhận trong giới hạn hiện có.
+Ở 6.0.5, mỗi request Rewards API có timeout 4 giây, gồm cả đọc JSON. Lượt quét không có thẻ không chờ điểm và không gọi API điểm. Sau hai lượt quét trống, tool chuyển bước; retry cuộn đứng yên hai lần cũng dừng quét vùng đó. Tool vẫn cho phép cuộn đến vị trí mới và thử lại thẻ chưa xác nhận trong giới hạn hiện có.
 
 Nếu dùng Schedule định kỳ, một phiên kết thúc vẫn có thể được lên lịch chạy lại ở chu kỳ sau.
 
@@ -70,7 +72,7 @@ Nếu dùng Schedule định kỳ, một phiên kết thúc vẫn có thể đư
 
 Từ 6.0.4, luồng tự động chỉ xóa cache; giữ cookie và dữ liệu xác thực khi chuyển PC → mobile, chạy mobile patch và chuẩn bị ACT. Bỏ tùy chọn backup/restore cũ vì xóa đăng nhập rồi khôi phục sau mobile có thể khiến mobile chạy khi mất phiên. Bản mới vẫn thử phục hồi snapshot còn sót từ bản cũ khi worker khởi động. Nút **Clear Bing Browsing Data** trong Settings vẫn xóa dữ liệu khi người dùng chủ động bấm.
 
-Bản 6.0 không có cơ chế xác nhận điểm mobile thực tế như 4.0. Kiểm tra điểm trên Rewards sau khi chạy thử.
+Bản 6.0.5 đọc PC/mobile counter trước và sau mobile rồi ghi tiến độ, giới hạn và chênh lệch vào diagnostic. Counter thiếu hoặc API lỗi được ghi là unknown; không biến dữ liệu thiếu thành 0 điểm. Luồng vẫn chạy theo số lượt cấu hình, không tự dừng theo quota như 4.0. Dòng search submitted xác nhận gửi search, còn điểm phải đối chiếu counter trên Rewards.
 
 ## 6. Settings và xử lý lỗi
 
@@ -88,7 +90,7 @@ Bản 6.0 không có cơ chế xác nhận điểm mobile thực tế như 4.0. 
 Nếu nút không chạy:
 
 1. Đọc thông báo dưới nút. Popup chờ phản hồi worker tối đa 20 giây rồi báo lỗi.
-2. Kiểm tra đúng thư mục và phiên bản 6.0.4, rồi reload extension.
+2. Kiểm tra đúng thư mục và phiên bản 6.0.5, rồi reload extension.
 3. Bật **Show Advance Logs**, mở **service worker** trong `chrome://extensions`, thử lại với `Desktop = 1`, `Mobile = 0`.
 4. Tải **crash log** nếu có lỗi. Không cần reset toàn bộ profile để kiểm tra lỗi khởi chạy.
 
@@ -103,4 +105,4 @@ node tests/check_syntax.js
 npm run lint
 ```
 
-Bản sửa đạt 400/400 kiểm thử, kiểm tra cú pháp và lint. Test popup dùng HTML/jQuery thực tế; test worker nạp graph module thực tế với Chrome API giả lập. Kết quả chưa xác nhận lượt chạy thực tế hoặc điểm Rewards trên profile Chrome của người dùng.
+Bản sửa đạt 410/410 kiểm thử, kiểm tra cú pháp và lint. Test popup dùng HTML/jQuery thực tế; test worker nạp graph module thực tế với Chrome API giả lập. Kết quả chưa xác nhận lượt chạy thực tế hoặc điểm Rewards trên profile Chrome của người dùng.

@@ -45,6 +45,106 @@ function makeConfig(overrides = {}) {
 }
 
 describe("runSearchPhases()", () => {
+  test("a counter read finishing after Stop/new Start cannot clear or reset the newer mobile session", async () => {
+    const config = makeConfig({
+      runtime: { currentSession: { id: "session-1" } },
+    });
+    const clearFn = jest.fn().mockResolvedValue(true);
+    const snapshot = { pcProgress: 3, mobProgress: 0 };
+    const readSearchCountersFn = jest
+      .fn()
+      .mockResolvedValueOnce(snapshot)
+      .mockImplementationOnce(async () => {
+        config.runtime.currentSession = { id: "session-2" };
+        config.runtime.currentPhase = "new-run";
+        return snapshot;
+      });
+    const result = await runSearchPhases(
+      { desk: 0, mob: 21, min: 7, max: 14 },
+      "session-1",
+      123,
+      {
+        isSessionStillActive: (id) => config.runtime.currentSession.id === id,
+        log: jest.fn(),
+        readSearchCountersFn,
+        searchFn: jest.fn().mockResolvedValue(true),
+        simulateFn: jest.fn().mockResolvedValue(true),
+        clearFn,
+        setConfig: jest.fn().mockResolvedValue(),
+        getConfig: () => config,
+        delayFn: jest.fn().mockResolvedValue(),
+        shortestDelay: 100,
+        detachFn: jest.fn().mockResolvedValue(),
+      },
+    );
+    expect(result).toBe(false);
+    expect(clearFn).toHaveBeenCalledTimes(1);
+    expect(config.runtime).toMatchObject({
+      running: 1,
+      mobile: 1,
+      currentPhase: "new-run",
+      currentSession: { id: "session-2" },
+    });
+  });
+  test.each([false, true])(
+    "records mobile credit or API failure without changing configured search counts: API failure=%s",
+    async (apiFails) => {
+      const config = makeConfig();
+      const log = jest.fn();
+      const searchFn = jest.fn().mockResolvedValue(true);
+      const readSearchCountersFn = apiFails
+        ? jest.fn().mockRejectedValue(new Error("HTTP 401"))
+        : jest
+            .fn()
+            .mockResolvedValueOnce({
+              pcProgress: 3,
+              pcMax: 150,
+              mobProgress: 0,
+              mobMax: 60,
+              counterNames: ["pcSearch", "mobileSearch"],
+            })
+            .mockResolvedValueOnce({
+              pcProgress: 6,
+              pcMax: 150,
+              mobProgress: 0,
+              mobMax: 60,
+              counterNames: ["pcSearch", "mobileSearch"],
+            });
+      const result = await runSearchPhases(
+        { desk: 1, mob: 21, min: 7, max: 14 },
+        "session-1",
+        123,
+        {
+          isSessionStillActive: () => true,
+          log,
+          searchFn,
+          readSearchCountersFn,
+          simulateFn: jest.fn().mockResolvedValue(true),
+          clearFn: jest.fn().mockResolvedValue(true),
+          setConfig: jest.fn().mockResolvedValue(),
+          getConfig: () => config,
+          delayFn: jest.fn().mockResolvedValue(),
+          shortestDelay: 100,
+          detachFn: jest.fn().mockResolvedValue(),
+        },
+      );
+      expect(result).toBe(true);
+      expect(searchFn.mock.calls).toEqual([
+        [1, 7, 14],
+        [21, 7, 14],
+      ]);
+      expect(readSearchCountersFn).toHaveBeenCalledTimes(2);
+      expect(log).toHaveBeenCalledWith(
+        expect.stringContaining(
+          apiFails
+            ? "cannot read Rewards counters: HTTP 401"
+            : "mobile=0, PC=3",
+        ),
+        "warning",
+      );
+    },
+  );
+
   test("Stop during mobile skips the remaining cache clear and resets mobile state", async () => {
     const config = makeConfig();
     const clearFn = jest.fn().mockResolvedValue(true);
