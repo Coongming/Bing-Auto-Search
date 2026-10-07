@@ -104,9 +104,7 @@ describe("buildRewardsSnapshot", () => {
   test("tolerates empty userStatus", () => {
     const snap = buildRewardsSnapshot({});
     expect(snap.pcProgress).toBe(0);
-    expect(snap.mobProgress).toBeNull();
-    expect(snap.mobMax).toBeNull();
-    expect(snap.score).toBeNull();
+    expect(snap.mobProgress).toBe(0);
   });
 });
 

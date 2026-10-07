@@ -14,12 +14,7 @@ export function findFirstNumberByKey(source, names) {
     if (!current || typeof current !== "object" || seen.has(current)) continue;
     seen.add(current);
     for (const [key, value] of Object.entries(current)) {
-      if (
-        targets.has(key.toLowerCase()) &&
-        value != null &&
-        value !== "" &&
-        typeof value !== "object"
-      ) {
+      if (targets.has(key.toLowerCase())) {
         const numeric = Number(value);
         if (Number.isFinite(numeric)) return numeric;
       }
@@ -74,21 +69,14 @@ export function buildRewardsSnapshot(userStatus) {
   const score =
     availablePoints ??
     lifetimePoints ??
-    (Object.keys(counters).length > 0 ? counterProgress : null);
+    (Number.isFinite(counterProgress) ? counterProgress : null);
   return {
     score,
     availablePoints,
     lifetimePoints,
     counterProgress,
     pcProgress: getCounterValue(counters.pcSearch, "progress"),
-    mobProgress:
-      Array.isArray(counters.mobileSearch) && counters.mobileSearch.length > 0
-        ? getCounterValue(counters.mobileSearch, "progress")
-        : null,
-    mobMax:
-      Array.isArray(counters.mobileSearch) && counters.mobileSearch.length > 0
-        ? getCounterValue(counters.mobileSearch, "max")
-        : null,
+    mobProgress: getCounterValue(counters.mobileSearch, "progress"),
   };
 }
 

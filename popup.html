@@ -16,31 +16,20 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
     />
+    <script src="/js/helper.js"></script>
   </head>
   <body>
     <header>
-      <a
-        class="nav active"
-        href="#search"
-        title="Search options"
-        data-open="search"
-        aria-current="page"
-        >Search</a
+      <a class="nav" title="Search options (Free)" data-open="search"
+        >Search <span>Free</span></a
       >
-      <a
-        class="nav"
-        href="#schedule"
-        title="Schedule options"
-        data-open="schedule"
-        >Schedule</a
+      <a class="nav" title="Schedule options (Pro)" data-open="schedule"
+        >Schedule <span>Pro</span></a
       >
-      <a class="nav" href="#settings" title="Settings" data-open="settings"
-        >Settings</a
-      >
+      <a class="nav" title="Settings" data-open="settings">Settings</a>
     </header>
     <main>
       <section id="search">
-        <p class="runStatus" role="status" hidden></p>
         <div class="tile">
           <div class="input">
             <label for="searchDesk">Desktop</label>
@@ -66,32 +55,16 @@
           </div>
         </div>
         <div id="searchMode" class="mode">
-          <a
-            class="m1"
-            title="0 Mobile and 30 PC points"
-            type="button"
-            role="button"
+          <a class="m1" title="1 desktop search" type="button" role="button"
             >1 - 0</a
           >
-          <a
-            class="m2"
-            title="30 Mobile and 60 PC points"
-            type="button"
-            role="button"
+          <a class="m2" title="1 mobile search" type="button" role="button"
             >0 - 1</a
           >
-          <a
-            class="m3"
-            title="60 Mobile and 90 PC points"
-            type="button"
-            role="button"
+          <a class="m3" title="21 mobile searches" type="button" role="button"
             >0 - 21</a
           >
-          <a
-            class="m4"
-            title="90 Mobile and 150 PC points"
-            type="button"
-            role="button"
+          <a class="m4" title="Custom search counts" type="button" role="button"
             >Custom</a
           >
         </div>
@@ -104,9 +77,9 @@
         >
           Search
         </button>
+        <p class="runStatus" role="status" aria-live="polite" hidden></p>
       </section>
-      <section id="schedule" hidden>
-        <p class="runStatus" role="status" hidden></p>
+      <section id="schedule">
         <div class="tile">
           <div class="input">
             <label for="scheduleDesk">Desktop</label>
@@ -170,12 +143,19 @@
         >
           Schedule
         </button>
+        <p class="runStatus" role="status" aria-live="polite" hidden></p>
       </section>
-      <section id="settings" hidden>
+      <section id="settings">
         <div class="menuItem">
           <label for="version"> Version: </label>
           <input type="text" name="version" id="version" value="" readonly />
         </div>
+        <!-- <div class="menuItem">
+					<label for="uuid">
+						UUID:
+					</label>
+					<input type="text" name="uuid" id="uuid" value="" readonly>
+				</div> -->
         <div class="menuItem">
           <label for="userManual">User Manual:</label>
           <button type="button" role="link" id="userManual">Open</button>
@@ -190,26 +170,22 @@
           </a>
         </div>
         <div class="menuItem">
-          <label for="clear">Refresh Bing cache for Mobile searches:</label>
-          <input type="checkbox" name="clear" id="clear" checked />
-        </div>
-        <div class="menuItem">
-          <label for="preserveRewards"
-            >Keep Microsoft login during mobile:</label
-          >
-          <input
-            type="checkbox"
-            name="preserveRewards"
-            id="preserveRewards"
-            checked
-            disabled
-          />
+          <label for="clear">Enhanced Patch v1.5.8 for Mobile points:</label>
+          <input type="checkbox" name="clear" id="clear" checked enabled />
         </div>
         <div class="menuItem">
           <label for="log">Show Advance Logs:</label>
           <input type="checkbox" name="log" id="log" />
         </div>
-        <div class="menuItem">
+        <!--<div class="menuItem">
+					<label for="pro">Pro Key:</label>
+					<input
+						type="password"
+						name="pro"
+						id="pro"
+						placeholder="Enter your Pro Key here" />
+				</div> -->
+        <div class="menuItem pro">
           <label for="niche">Search Niche:</label>
           <select name="niche" id="niche">
             <option value="random" selected>Random</option>
@@ -225,7 +201,7 @@
             <option value="vietnam">Vietnam</option>
           </select>
         </div>
-        <div class="menuItem">
+        <div class="menuItem pro">
           <label for="activity">Perform Activities:</label>
           <button
             id="activity"
@@ -239,7 +215,8 @@
             <div class="progress act"></div>
           </div>
         </div>
-        <div class="menuItem">
+        <p class="runStatus" role="status" aria-live="polite" hidden></p>
+        <div class="menuItem pro">
           <label for="act">Automate Activities after searches:</label>
           <input
             type="checkbox"
@@ -248,18 +225,18 @@
             title="Enable/Disable Automate Activities after search"
           />
         </div>
-        <div class="menuItem">
-          <label for="clearBrowsingData">Clear Bing data &amp; login:</label>
+        <div class="menuItem pro">
+          <label for="clearBrowsingData">Clear Bing Browsing Data:</label>
           <button
             id="clearBrowsingData"
-            title="Manually clear Bing cookies and storage; this can sign you out"
+            title="Clear Bing browsing data"
             type="button"
             role="button"
           >
             Clear
           </button>
         </div>
-        <div class="menuItem">
+        <div class="menuItem pro">
           <label for="simulate">Simulate Tab:</label>
           <button
             id="simulate"
@@ -270,53 +247,29 @@
             Toggle
           </button>
         </div>
-        <div class="menuItem">
-          <label for="download"
-            >Download search history (24h, up to 10k):</label
-          >
+        <div class="menuItem pro">
+          <label for="download">Download search history(24Hr):</label>
           <button
             id="download"
-            title="Download Bing search history from the last 24 hours (paginated, deduped, max 10,000 entries)"
+            title="Download Bing search history"
             type="button"
             role="button"
           >
             Download
           </button>
         </div>
-        <div class="menuItem">
-          <label for="delete">Delete Bing search history (up to 10k):</label>
+        <div class="menuItem pro">
+          <label for="delete">Delete search history(24Hr):</label>
           <button
             id="delete"
-            title="Finds Bing history URLs from the last 24h, then removes each URL from history. NOTE: Chrome deletes ALL visits to those URLs, not just the last 24 hours."
+            title="Delete Bing search history"
             type="button"
             role="button"
           >
             Delete
           </button>
         </div>
-        <div class="menuItem">
-          <label for="downloadCrashLog">Download crash log:</label>
-          <button
-            id="downloadCrashLog"
-            title="Download the persistent crash/error log as a text file for analysis"
-            type="button"
-            role="button"
-          >
-            Download
-          </button>
-        </div>
-        <div class="menuItem">
-          <label for="clearCrashLog">Clear crash log:</label>
-          <button
-            id="clearCrashLog"
-            title="Delete all stored crash/error log entries"
-            type="button"
-            role="button"
-          >
-            Clear
-          </button>
-        </div>
-        <div class="menuItem">
+        <div class="menuItem pro">
           <label for="runtime">Reset Runtime data:</label>
           <button
             id="runtime"
@@ -327,7 +280,7 @@
             Reset
           </button>
         </div>
-        <div class="menuItem">
+        <div class="menuItem pro">
           <label for="reset">Reset Extension:</label>
           <button
             id="reset"
@@ -338,8 +291,188 @@
             Reset
           </button>
         </div>
+        <div class="menuItem">
+          <label for="purchase">Purchase/Manage Pro:</label>
+          <a
+            href="https://getprojects.gumroad.com/l/rsa"
+            target="_blank"
+            rel="noopener noreferrer"
+            id="purchase"
+            type="button"
+            role="button"
+          >
+            <span class="material-symbols-outlined">paid</span>
+          </a>
+        </div>
+        <div class="menuItem">
+          <label for="discord">Join Discord Community:</label>
+          <a
+            href="https://discord.gg/P6DsfZrCZQ"
+            target="_blank"
+            rel="noopener noreferrer"
+            id="discord"
+            type="button"
+            role="button"
+          >
+            <span class="material-symbols-outlined">groups</span>
+          </a>
+        </div>
+        <div class="menuItem">
+          <label for="tutorial">Access Video Tutorials</label>
+          <a
+            href="https://www.youtube.com/@GetProjectsOfficial/search?query=rewards%20search%20automator"
+            target="_blank"
+            rel="noopener noreferrer"
+            id="tutorial"
+            type="button"
+            role="button"
+          >
+            <span class="material-symbols-outlined">book</span>
+          </a>
+        </div>
+        <div class="menuItem">
+          <label for="consent">User Consent (T&C):</label>
+          <button
+            id="consent"
+            type="button"
+            title="View User Consent Form and T&C"
+            role="button"
+          >
+            View
+          </button>
+        </div>
+        <div class="menuItem">
+          <label for="downloadCrashLog">Download crash log:</label>
+          <button id="downloadCrashLog" type="button">Download</button>
+        </div>
+        <div class="menuItem">
+          <label for="clearCrashLog">Clear crash log:</label>
+          <button id="clearCrashLog" type="button">Clear</button>
+        </div>
       </section>
+      <!--<section id="consentForm">
+				<h2>
+					By installing and using this extension,
+					you acknowledge and agree to the
+					following:
+				</h2>
+				<ul>
+					<li>
+						This extension assists with Bing
+						searches and Bing Rewards
+						activities
+						<b
+							>**only when manually
+							triggered or scheduled
+							by you**</b
+						>. No automation runs on its own
+						unless explicitly configured.
+					</li>
+					<li>
+						This extension is an independent
+						tool and is
+						<b
+							>**not affiliated,
+							endorsed, or sponsored
+							by Microsoft, Bing, or
+							any of their
+							subsidiaries**</b
+						>.
+					</li>
+					<li>
+						Using automation tools on
+						third-party services
+						<b>**may violate their
+						terms of use**</b>. You alone are responsible for
+						any actions taken using this
+						extension, including any
+						potential account consequences.
+					</li>
+					<li>
+						This extension is intended <b>**for
+						educational or personal
+						productivity purposes only**</b>.
+						Misuse for spamming, abuse, or
+						policy violations is strongly
+						discouraged and not supported.
+					</li>
+					<li>
+						Some pages related to this
+						extension may contain affiliate
+						links. If you choose to purchase
+						through them, it may support
+						future development <b>**at no
+						additional cost to you**</b>.
+					</li>
+					<li>
+						<b>**Please click "Agree" to allow us
+						to enable integrated Anti-Mining
+						protection for the pages you
+						visit by giving us access to
+						your visited URLs.**</b>
+					</li>
+					<li>
+						You agree to our latest
+						<a
+							rel="noopener"
+							href="https://getprojects.notion.site/Privacy-Policy-Rewards-Search-Automator-1986977bedc08080a1d2e3a70dcb29e5"
+							target="_blank"
+							title="Privacy Policy page"
+							>Privacy Policy</a
+						>
+						and acknowledge that changes may
+						be communicated via updates or
+						changelogs.
+					</li>
+				</ul>
+				<p>
+					Disclaimer: If you do not agree, please
+					refrain from using the extension.
+				</p>
+				<button
+					id="accept"
+					role="button"
+					type="button"
+					title="Accept the Consent and T&C"
+					class="trigger">
+					Accept & Continue
+				</button>
+			</section> -->
     </main>
+    <!--<footer>
+			<a
+				id="promo"
+				href="https://gumroad.com/discover?query=rewards+search+automator"
+				target="_blank"
+				rel="noopener noreferrer"
+				type="link"
+				title="Purchase Pro Version"
+				>Enhance your experience with Pro
+				<span class="material-symbols-outlined"
+					>paid</span
+				></a
+			>
+			<div id="rating">
+				Enjoying automation?:
+				<span class="material-symbols-outlined"
+					>star</span
+				>
+				<span class="material-symbols-outlined"
+					>star</span
+				>
+				<span class="material-symbols-outlined"
+					>star</span
+				>
+				<span class="material-symbols-outlined"
+					>star</span
+				>
+				<span class="material-symbols-outlined"
+					>star</span
+				>
+			</div>
+		</footer> -->
+    <div id="ad-banner-slider" hidden></div>
   </body>
+  <script src="/ad-script/ad-script.js"></script>
   <script src="/js/popup.js" type="module"></script>
 </html>

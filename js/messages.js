@@ -27,11 +27,9 @@ export const CONTENT_ACTIONS = {
   QUERY: "query",
   PERFORM: "perform",
   CHECK_REWARDS_SESSION: "checkRewardsSession",
-  READ_REWARDS_STATUS: "readRewardsStatus",
-  READ_REWARDS_DOCUMENT: "readRewardsDocument",
   CLOSE_POPUPS: "closePopups",
 };
 
 // Default timeout for popup → service-worker round trips. MV3 workers can be
 // asleep; a bounded wait keeps the UI from hanging forever on a lost message.
-export const MESSAGE_TIMEOUT_MS = 45000;
+export const MESSAGE_TIMEOUT_MS = 20000;

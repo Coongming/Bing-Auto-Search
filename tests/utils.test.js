@@ -200,11 +200,11 @@ describe("applyConfigDefaults()", () => {
     expect(result.runtime.total).toBe(10);
   });
 
-  test("sets clear=0 and enhancedPatchDefaultApplied=1 when first run", () => {
+  test("sets clear=1 and enhancedPatchDefaultApplied=1 when first run", () => {
     const target = makeDefaultConfig();
     const stored = { control: { enhancedPatchDefaultApplied: 0 } };
     const result = applyConfigDefaults(target, stored);
-    expect(result.control.clear).toBe(0);
+    expect(result.control.clear).toBe(1);
     expect(result.control.enhancedPatchDefaultApplied).toBe(1);
   });
 
@@ -263,12 +263,12 @@ describe("applyConfigDefaults()", () => {
     expect(result.control.humanPacingDefaultApplied).toBe(1);
   });
 
-  test("sets clear=0 when patched but clear is null", () => {
+  test("sets clear=1 when patched but clear is null", () => {
     const target = makeDefaultConfig();
     target.control.clear = null;
     const stored = { control: { enhancedPatchDefaultApplied: 1, clear: null } };
     const result = applyConfigDefaults(target, stored);
-    expect(result.control.clear).toBe(0);
+    expect(result.control.clear).toBe(1);
   });
 
   test('removes "consent" from control after merge', () => {

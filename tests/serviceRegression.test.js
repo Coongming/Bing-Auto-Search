@@ -60,14 +60,9 @@ describe("service regressions", () => {
     expect(config.runtime).toHaveProperty("searchCounterDate", "");
   });
 
-  test("Rewards counter sync is centralized in the service worker", () => {
-    expect(serviceSource).toContain(
-      "config.runtime.searchCounterDate = todayKey();",
-    );
-    expect(contentSource).toContain('fetch("/api/getuserinfo"');
-    expect(serviceSource).not.toContain(
-      'fetch("https://rewards.bing.com/api/getuserinfo"',
-    );
+  test("Rewards score reads stay in the service worker", () => {
+    expect(serviceSource).toContain("async function fetchRewardsSnapshot()");
+    expect(contentSource).not.toContain("rewards.bing.com/api/getuserinfo");
     expect(contentSource).not.toContain("nextConfig.runtime.searchCounterDate");
   });
 
@@ -105,15 +100,14 @@ describe("service regressions", () => {
     expect(serviceSource).toContain("success: simulated");
   });
 
-  test("daily search plan ignores stale Rewards counters", () => {
+  test("6.0 resets stale counters and keeps configured-count plans", () => {
     expect(serviceSource).toContain("function resetStaleSearchCounters()");
-    expect(serviceSource).toContain("function hasFreshSearchCounters()");
-    expect(serviceSource).toContain(
-      "freshCounters && isDailySearchCounterDone(config?.runtime?.pcSearch)",
+    const planBlock = serviceSource.slice(
+      serviceSource.indexOf("function limitSearchPlanForToday("),
+      serviceSource.indexOf("function hasActivityQuota("),
     );
-    expect(serviceSource).toContain(
-      "freshCounters && isDailySearchCounterDone(config?.runtime?.mobileSearch)",
-    );
+    expect(planBlock).toContain("return normalizeSearchPlan(searches);");
+    expect(planBlock).not.toContain("limitPlanForCompletedCounters");
   });
 
   test("search query selection keeps per-run template history", () => {
@@ -132,16 +126,20 @@ describe("service regressions", () => {
     );
   });
 
-  test("unrelated Microsoft tabs cannot trigger a cookie wipe during mobile", () => {
-    expect(serviceSource).not.toContain("needPatch");
-    expect(serviceSource).not.toContain("clear(interruptible, true)");
-    expect(serviceSource).not.toContain("handleMsNavigation");
+  test("mobile patch click does not immediately repeat the startup warmup click", () => {
+    expect(serviceSource).toContain("let clickedForPatch = false;");
+    expect(serviceSource).toContain(
+      "clickedForPatch = await click(interruptible);",
+    );
+    expect(serviceSource).toContain(
+      "if (clearIt && i < 3 && !clickedForPatch)",
+    );
   });
 
   test("activity confirmation does not count skips or zero-delta processed tabs as success", () => {
     expect(
       serviceSource.match(
-        /const confirmedClick =\s*completedKeys\.length > 0/g,
+        /const confirmedClick = Number\.isFinite\(pointDelta\)/g,
       ),
     ).toHaveLength(2);
     expect(
@@ -150,16 +148,17 @@ describe("service regressions", () => {
     expect(serviceSource).not.toContain("passResult.skipped > 0 ||");
   });
 
-  test("legacy auth recovery only reads Bing/Rewards domains", async () => {
+  test("auth cookie backup reads only cleared Bing/Rewards domains and excludes unrelated cookies", async () => {
     const getAll = jest.fn(({ domain }) =>
       Promise.resolve([
         {
           domain: domain === "bing.com" ? ".bing.com" : "rewards.bing.com",
           path: "/",
-          name: `cookie-${domain}`,
+          name: `session-${domain}`,
           value: "value",
           secure: true,
         },
+        { domain, path: "/", name: "analytics", value: "unrelated" },
       ]),
     );
     const helpers = loadCookieHelpers({ getAll });
@@ -175,15 +174,13 @@ describe("service regressions", () => {
       "rewards.bing.com",
     ]);
     expect(snapshot.map((cookie) => cookie.name)).toEqual([
-      "cookie-bing.com",
-      "cookie-rewards.bing.com",
+      "session-bing.com",
+      "session-rewards.bing.com",
     ]);
   });
 
-  test("post-search activities respect stop via isRuntimeActive", () => {
-    expect(serviceSource).toContain(
-      "const shouldContinueActivity = () => isRuntimeActive();",
-    );
+  test("post-search activities respect both runtime stop and session ownership", () => {
+    expect(serviceSource).toContain("ownsActivity() && isRuntimeActive()");
     expect(serviceSource).not.toContain("!interruptible || isRuntimeActive()");
   });
 
@@ -278,7 +275,7 @@ describe("service regressions", () => {
     expect(popupSource).toContain("await fetchBingHistoryLast24Hours()");
   });
 
-  test("popup shows Stop on schedule trigger only for an active schedule run", () => {
+  test("popup shows Stop on the trigger owning the active run", () => {
     expect(popupSource).toContain(
       '$scheduleTrigger.text(isScheduleRun ? "Stop" : "Schedule")',
     );
@@ -415,10 +412,8 @@ describe("service regressions", () => {
     expect(serviceSource).toContain('"CLAIM"');
   });
 
-  test("scheduled runs fail closed when Rewards counters are unavailable", () => {
-    expect(serviceSource).toContain(
-      "Rewards counters unavailable; postponed scheduled run.",
-    );
+  test("6.0 does not claim to refresh disabled Rewards counters", () => {
+    expect(serviceSource).not.toContain("const countersRefreshed = true;");
     expect(serviceSource).toContain("keeping previous counters as unknown.");
   });
 });

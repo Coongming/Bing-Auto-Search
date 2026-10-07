@@ -9,7 +9,6 @@ const {
   createEarnActivityScript,
   createSolveActivityScript,
   createClaimReadyScript,
-  createActivityCompletionScript,
 } = loadEsmModule("../js/injected-scripts.js");
 
 // Compile (but never invoke) a script string to assert it is syntactically
@@ -19,7 +18,81 @@ function assertCompiles(scriptString) {
   expect(() => new Function(scriptString)).not.toThrow();
 }
 
+function activityFixture(heading, cards) {
+  document.body.innerHTML = `<main><h2>${heading}</h2><div class="cards">${cards}</div><h2>Your activity</h2></main>`;
+  for (const el of document.querySelectorAll("*")) {
+    el.getBoundingClientRect = () => ({
+      width: 900,
+      height: 240,
+      top: 45,
+      bottom: 285,
+      left: 0,
+      right: 900,
+    });
+    el.scrollIntoView = () => {};
+  }
+  document.querySelector("h2").getBoundingClientRect = () => ({
+    width: 200,
+    height: 30,
+    top: 10,
+    bottom: 40,
+    left: 0,
+    right: 200,
+  });
+  document.querySelectorAll("h2")[1].getBoundingClientRect = () => ({
+    width: 200,
+    height: 30,
+    top: 300,
+    bottom: 330,
+    left: 0,
+    right: 200,
+  });
+  for (const [index, card] of [...document.querySelectorAll("a")].entries()) {
+    card.getBoundingClientRect = () => ({
+      width: 220,
+      height: 70,
+      top: 60,
+      bottom: 130,
+      left: 20 + index * 240,
+      right: 240 + index * 240,
+    });
+    card.click = jest.fn();
+  }
+  document.elementFromPoint = jest.fn((x) =>
+    [...document.querySelectorAll("a")].find((card) => {
+      const rect = card.getBoundingClientRect();
+      return x >= rect.left && x <= rect.right;
+    }),
+  );
+}
+
 describe("createDashboardActivityScript", () => {
+  test("a completed sibling never marks an unfinished Daily set card as done", () => {
+    activityFixture(
+      "Daily set",
+      '<a class="daily-card completed" href="https://rewards.bing.com/dset1">+10 Start quiz <svg data-icon="checkmark"></svg></a><a class="daily-card" href="https://rewards.bing.com/dset2">+10 Start poll</a>',
+    );
+    const result = new Function(
+      "return (" + createDashboardActivityScript([], 1, true) + ")",
+    )();
+    expect(result.openedKeys).toEqual(["https://rewards.bing.com/dset2"]);
+    expect(result.skipped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reason: "already done" }),
+      ]),
+    );
+  });
+
+  test("incomplete is not a completed state", () => {
+    activityFixture(
+      "Daily set",
+      '<a class="daily-card incomplete" href="https://rewards.bing.com/dset1">+10 Start quiz</a>',
+    );
+    const result = new Function(
+      "return (" + createDashboardActivityScript([], 1, true) + ")",
+    )();
+    expect(result.clicked).toHaveLength(1);
+  });
   test("produces syntactically valid JS", () => {
     assertCompiles(createDashboardActivityScript(["a", "b"], 1));
   });
@@ -90,6 +163,29 @@ describe("createDashboardActivityScript", () => {
 });
 
 describe("createEarnActivityScript", () => {
+  test("defers the selected Keep earning card to CDP without clicking it during the scan", () => {
+    activityFixture(
+      "Keep earning",
+      '<a class="earn-card" href="https://rewards.bing.com/offer1">+10 Start quiz</a>',
+    );
+    const card = document.querySelector("a");
+    const result = new Function(
+      "return (" + createEarnActivityScript([], 1, true) + ")",
+    )();
+    expect(result.clicked).toHaveLength(1);
+    expect(result.pressPoint).toEqual({ x: 130, y: 95 });
+    expect(card.click).not.toHaveBeenCalled();
+  });
+  test("a completed sibling does not block an unfinished Keep earning card", () => {
+    activityFixture(
+      "Keep earning",
+      '<a class="earn-card completed" href="https://rewards.bing.com/offer1">+10 Start quiz <svg data-icon="checkmark"></svg></a><a class="earn-card block incomplete" href="https://rewards.bing.com/offer2">+10 Start poll</a>',
+    );
+    const result = new Function(
+      "return (" + createEarnActivityScript([], 1) + ")",
+    )();
+    expect(result.openedKeys).toEqual(["https://rewards.bing.com/offer2"]);
+  });
   test("produces syntactically valid JS", () => {
     assertCompiles(createEarnActivityScript(["x"], 2));
   });
@@ -98,95 +194,6 @@ describe("createEarnActivityScript", () => {
     const script = createEarnActivityScript(["quiz"], 4);
     expect(script).toContain(JSON.stringify(["quiz"]));
     expect(script).toContain("const safetyLimit = 4;");
-  });
-});
-
-describe("activity card completion boundaries", () => {
-  beforeEach(() => {
-    document.body.innerHTML = `<main><h2>Daily set</h2><div class="row">
-      <a class="daily-card" href="https://www.bing.com/search?q=done">First card 10 Completed <svg data-icon="checkmark"></svg></a>
-      <a class="daily-card" href="https://www.bing.com/search?q=next">Second card +10 Start quiz</a>
-      </div><h2>Your activity</h2></main>`;
-    document.querySelectorAll("h2").forEach((heading, index) => {
-      const top = index === 0 ? 10 : 180;
-      heading.getBoundingClientRect = () => ({
-        width: 200,
-        height: 30,
-        top,
-        bottom: top + 30,
-        left: 0,
-        right: 200,
-      });
-    });
-    document.querySelectorAll("a").forEach((card, index) => {
-      card.getBoundingClientRect = () => ({
-        width: 220,
-        height: 70,
-        top: 60,
-        bottom: 130,
-        left: index * 240,
-        right: index * 240 + 220,
-      });
-      card.scrollIntoView = () => {};
-    });
-    document.elementFromPoint = () => document.querySelectorAll("a")[1];
-  });
-
-  test("a completed sibling does not prevent clicking the next Daily Set card", () => {
-    const result = new Function(
-      "return (" + createDashboardActivityScript([], 1, true) + ")",
-    )();
-    expect(result.clicked).toHaveLength(1);
-    expect(result.clicked[0].text).toContain("Second card");
-  });
-
-  test("opening a card is not confirmed by the sibling's completion tick", () => {
-    const item = {
-      key: "https://www.bing.com/search?q=next",
-      text: "Second card +10 Start quiz",
-    };
-    const script = createActivityCompletionScript([item]);
-    expect(new Function("return (" + script + ")")().completedKeys).toEqual([]);
-    document.querySelectorAll("a")[1].textContent =
-      "Second card +10 Start quiz Completed";
-    expect(new Function("return (" + script + ")")().completedKeys).toEqual([
-      item.key,
-    ]);
-  });
-
-  test("a Tailwind block class is not interpreted as a locked earn card", () => {
-    document.querySelector("h2").textContent = "Keep earning";
-    const card = document.querySelectorAll("a")[1];
-    card.innerHTML = '<span class="block">Second card +10 Start quiz</span>';
-    card.click = jest.fn();
-    const result = new Function(
-      "return (" + createEarnActivityScript([], 1) + ")",
-    )();
-    expect(result.clicked).toHaveLength(1);
-    expect(result.clicked[0].text).toContain("Second card");
-  });
-
-  test("button-only cards cannot inherit completion from their shared row", () => {
-    document.body.innerHTML =
-      "<main><div><button>First card Completed</button><button>Second card</button></div></main>";
-    const item = { key: "Second card|60|240", text: "Second card" };
-    const script = createActivityCompletionScript([item]);
-    expect(new Function("return (" + script + ")")().completedKeys).toEqual([]);
-    document.querySelectorAll("button")[1].textContent += " Completed";
-    expect(new Function("return (" + script + ")")().completedKeys).toEqual([
-      item.key,
-    ]);
-  });
-
-  test("different cards sharing a URL still have separate completion states", () => {
-    document.querySelectorAll("a")[0].href =
-      document.querySelectorAll("a")[1].href;
-    const item = {
-      key: "https://www.bing.com/search?q=next",
-      text: "Second card +10 Start quiz",
-    };
-    const script = createActivityCompletionScript([item]);
-    expect(new Function("return (" + script + ")")().completedKeys).toEqual([]);
   });
 });
 

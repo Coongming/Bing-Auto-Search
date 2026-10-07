@@ -1,144 +1,106 @@
-# Hướng Dẫn Sử Dụng Search Auto
+# Search Auto — Bing 6.0.4
 
-## 1. Cài extension vào Chrome/Edge
+Bản 6.0.4 sửa lỗi bấm **Search/Start** hoặc **Schedule** không chạy: popup còn kiểm tra trường consent đã bị worker loại bỏ, đồng thời chờ tải quảng cáo trước khi gắn sự kiện. Bản sửa lưu đúng giá trị đang nhập, bảo vệ trạng thái phiên chạy và hiển thị lỗi ngay dưới nút.
 
-1. Tải hoặc clone repo này về máy.
-2. Mở Chrome/Edge và vào trang `chrome://extensions`.
-3. Bật `Developer mode`.
-4. Chọn `Load unpacked`.
-5. Chọn đúng thư mục `Bing 4.0`. Bản sửa hiện hiển thị version `2.0.2`.
-6. Pin extension `Search Auto` lên thanh công cụ để dễ mở.
+Xem [báo cáo so sánh 2.0 / 4.0 / 6.0 và kết quả kiểm thử](COMPARISON_FIX_REPORT.vi.md).
 
-Sau mỗi lần pull code mới từ GitHub, quay lại `chrome://extensions` và bấm nút reload ở extension.
+Bản 6.0.4 sửa thêm Daily set/Keep earning bị bỏ qua do dấu hoàn thành của thẻ bên cạnh hoặc class `incomplete`. Nút Perform có Stop riêng và activity kiểm tra session để dừng an toàn khi khởi chạy lại.
 
-## 2. Chuẩn bị trước khi chạy
+## 1. Cài hoặc cập nhật trên Chrome
 
-1. Đăng nhập tài khoản Microsoft/Bing trong trình duyệt.
-2. Mở `https://rewards.bing.com/` một lần để chắc chắn tài khoản đã vào được dashboard.
-3. Không mở DevTools cho tab extension khi đang chạy, vì extension dùng Chrome debugger để giả lập mobile.
-4. Nên bật log nếu cần xem lỗi: mở extension > `Settings` > bật `Show Advance Logs`, sau đó xem console của service worker trong `chrome://extensions`.
+1. Mở `chrome://extensions`, bật **Developer mode**.
+2. Nếu chưa cài, chọn **Load unpacked** và chọn chính thư mục **Bing 6.0** chứa `manifest.json`.
+3. Nếu đã cài từ thư mục này, bấm **Reload** trên extension **Search Auto**.
+4. Kiểm tra phiên bản **6.0.4**, rồi đóng và mở lại popup.
+5. Trong **Search**, chọn `1 - 0`, bấm **Search**. Nút sẽ thành **Stop**, có trạng thái dưới nút và worker mở tab Bing.
 
-## 3. Chạy search thủ công
+Chrome tối thiểu theo manifest là 111. Extension không cần đăng nhập Google trên profile Chrome. Để nhận điểm Rewards hoặc chạy Daily set / Keep earning, cần đăng nhập Microsoft trên Bing/Rewards.
 
-1. Mở extension.
-2. Vào tab `Search`.
-3. Nhập số lượt:
-   - `Desktop`: số search desktop.
-   - `Mobile`: số search mobile.
-4. Chọn delay:
-   - `Min. Delay`: thời gian chờ tối thiểu giữa các search.
-   - `Max. Delay`: thời gian chờ tối đa giữa các search.
-5. Có thể bấm nhanh các mode:
-   - `10 - 0`: chỉ desktop nhẹ.
-   - `20 - 10`: desktop + mobile vừa.
-   - `30 - 20`: mức thường dùng.
-   - `50 - 30`: mức cao, nên dùng delay dài hơn.
-6. Bấm `Search`.
-7. Khi đang chạy, nút sẽ đổi thành `Stop`; bấm lại nếu muốn dừng.
+## 2. Search thủ công
 
-Khuyến nghị: dùng delay `15-30s` hoặc cao hơn nếu chạy nhiều acc để giảm lỗi Bing không ghi nhận điểm.
+1. Vào **Search**, nhập số lượt **Desktop** và **Mobile**.
+2. Nhập **Min. Delay** và **Max. Delay** theo giây. Mặc định của 6.0 là `7–14` giây; popup chuẩn hóa giá trị ngoài giới hạn.
+3. Có thể chọn preset `1 - 0`, `0 - 1`, `0 - 21`, hoặc tự nhập số lượt.
+4. Bấm **Search**. Giá trị đang nhập được lưu trước khi gửi lệnh, kể cả khi chưa rời ô nhập.
+5. Bấm **Stop** để dừng phiên hiện tại. Trong lúc Search chạy, nút chạy ở Schedule bị vô hiệu hóa.
 
-## 4. Chạy daily set và Keep earning
+“Starting” xác nhận worker nhận lệnh. Khi chạy xong thành công, thông báo trạng thái được ẩn; việc Microsoft cộng điểm cần kiểm tra riêng trên Rewards. Bản 6.0 chạy theo số lượt cấu hình, không tự giảm số lượt dựa trên daily search counter.
 
-Có 2 cách chạy:
+## 3. Schedule
 
-### Chạy tự động sau search
+1. Vào **Schedule**, nhập số lượt và khoảng delay.
+2. Chọn chế độ trong bảng. Chọn chế độ chỉ lưu tần suất, không tự bắt đầu và không đổi số lượt.
+3. Bấm **Schedule** để chạy ngay một phiên với cấu hình đã nhập và áp dụng chế độ đó.
 
-1. Vào `Settings`.
-2. Bật `Automate Activities after searches`.
-3. Quay lại tab `Search`.
-4. Bấm `Search`.
+| Chế độ            | Sau lần chạy ngay khi bấm Schedule                                       |
+| ----------------- | ------------------------------------------------------------------------ |
+| Manual Only       | Không tự chạy lại.                                                       |
+| At Startup        | Chạy khi Chrome khởi động qua sự kiện `runtime.onStartup`.               |
+| Every ~5 Minutes  | Lần tiếp theo sau khoảng 5 phút đến 7 phút 29 giây khi phiên kết thúc.   |
+| Every ~15 Minutes | Lần tiếp theo sau khoảng 15 phút đến 17 phút 29 giây khi phiên kết thúc. |
 
-Sau khi search xong, extension sẽ tự mở Rewards dashboard, click `Daily set`, rồi chuyển sang trang `Keep earning` để xử lý các card còn điểm.
+Khoảng chờ có thể dài hơn sau thất bại. Chrome phải đang chạy để thực thi alarm. Với **At Startup**, thử bằng cách thoát hẳn và mở lại Chrome; mở lại cửa sổ hoặc popup không phải khởi động trình duyệt.
 
-### Chạy riêng activity
+Stop dừng phiên hiện tại và giữ cấu hình tần suất. Để ngừng các lần chạy tự động tiếp theo, chọn **Manual Only** và bấm **Schedule** để áp dụng.
 
-1. Vào `Settings`.
-2. Bấm `Perform` ở dòng `Perform Activities`.
+## 4. Daily set và Keep earning
 
-Cách này dùng khi search đã xong nhưng muốn chạy lại daily set hoặc earning point.
+- Bật **Automate Activities after searches** trong Settings để chạy activity sau search.
+- Bấm **Perform** ở **Perform Activities** để chạy riêng activity. Khi chạy, nút này thành **Stop**; Search/Schedule bị khóa để tránh chạy chồng. Nếu activity chạy sau search, dùng Stop ở nút Search/Schedule đang sở hữu phiên.
+- Đăng nhập Microsoft và mở `https://rewards.bing.com/` để xác nhận tài khoản truy cập được dashboard.
 
-## 5. Chạy mobile points ổn định hơn
+Bản 6.0 đọc dữ liệu activity qua Rewards API. Nếu search chạy nhưng activity không hoàn thành, xem trạng thái dưới nút và kiểm tra phiên đăng nhập Microsoft.
 
-Trong `Settings`, `Refresh Bing cache for Mobile searches` chỉ làm mới cache. Luồng tự động giữ cookie và localStorage đăng nhập Microsoft suốt lượt mobile, đồng thời vẫn giả lập thiết bị bằng debugger.
+### Các bước và điều kiện kết thúc ACT
 
-Bản 2.0.2 đọc bộ đếm trong một tab Rewards phụ cùng profile. Khi `fetch` báo lỗi kết nối, extension thử mở trực tiếp `https://rewards.bing.com/api/getuserinfo` trong tab nền, đọc JSON rồi đóng chính tab phụ đó. Mỗi lần kiểm tra mở lại API để lấy dữ liệu mới; không điều hướng tab của người dùng và không xóa cookie. Nếu API trả về dữ liệu rỗng (ví dụ `code: 9`) thì vẫn báo không đọc được điểm, không coi đó là 0 điểm hay tự kết luận bị đăng xuất.
+1. Mở Rewards và kiểm tra phiên Microsoft.
+2. Quét Daily set, click từng thẻ còn việc, xử lý tab quiz/poll và kiểm tra kết quả.
+3. Chuyển Keep earning, rồi kiểm tra Ready to claim/Claim.
+4. Đóng tab activity, bỏ debugger và xóa trạng thái ACT/bận.
 
-Sau mỗi 3 search (hoặc khi kết thúc lượt ngắn), extension đợi và kiểm tra điểm mobile thật. Nếu bộ đếm không tăng hoặc không đọc được, lượt mobile dừng và hiện lý do trong popup. Search đổi URL không còn được xem là bằng chứng đã cộng điểm; việc ghi nhận điểm vẫn do Microsoft quyết định.
+Click một thẻ chưa phải kết thúc toàn bộ ACT. Tool vẫn có thể đang trả lời quiz, chờ điểm hoặc xử lý bước kế tiếp.
 
-Nếu mobile bị dừng ở vài acc:
+Từ 6.0.3, mỗi request Rewards API có timeout 8 giây, gồm cả đọc JSON. Lượt quét không có thẻ không chờ điểm và không gọi API điểm. Sau hai lượt quét trống, tool chuyển bước; retry cuộn đứng yên hai lần cũng dừng quét vùng đó. Tool vẫn cho phép cuộn đến vị trí mới và thử lại thẻ chưa xác nhận trong giới hạn hiện có.
 
-1. Bấm `Reset Runtime data`.
-2. Kiểm tra dòng trạng thái trong popup và tài khoản Microsoft trên Rewards. Không xóa cookie để thử lại: nút `Clear Bing data & login` là thao tác thủ công có thể đăng xuất.
-3. Bấm biểu tượng refresh ở dòng device để đổi thiết bị giả lập.
-4. Reload extension trong `chrome://extensions`.
-5. Chạy lại với delay cao hơn, ví dụ `25-45s`.
+Nếu dùng Schedule định kỳ, một phiên kết thúc vẫn có thể được lên lịch chạy lại ở chu kỳ sau.
 
-## 6. Schedule
+## 5. Mobile và cookie đăng nhập
 
-1. Vào tab `Schedule`.
-2. Nhập số lượt `Desktop`, `Mobile`, `Min. Delay`, `Max. Delay`.
-3. Chọn mode:
-   - `Manual Only`: không tự chạy.
-   - `At Startup`: thử chạy khi mở trình duyệt; nếu chưa đọc được Rewards hoặc đang có lượt khác, thử lại tối đa 4 lần, cách nhau 1 phút. Không tự chạy khi chưa xác minh được bộ đếm.
-   - `Every ~5 Minutes`: tự chạy lại sau khoảng 5 phút, có random.
-   - `Every ~15 Minutes`: tự chạy lại sau khoảng 15 phút, có random.
-4. Bấm `Schedule`.
+**Enhanced Patch v1.5.8 for Mobile points** điều khiển luồng hỗ trợ mobile. Extension dùng Chrome debugger để giả lập thiết bị; DevTools gắn vào tab Bing đang chạy có thể làm attach debugger thất bại.
 
-Nếu đang chạy schedule và muốn dừng, mở extension rồi bấm `Stop`.
+Từ 6.0.4, luồng tự động chỉ xóa cache; giữ cookie và dữ liệu xác thực khi chuyển PC → mobile, chạy mobile patch và chuẩn bị ACT. Bỏ tùy chọn backup/restore cũ vì xóa đăng nhập rồi khôi phục sau mobile có thể khiến mobile chạy khi mất phiên. Bản mới vẫn thử phục hồi snapshot còn sót từ bản cũ khi worker khởi động. Nút **Clear Bing Browsing Data** trong Settings vẫn xóa dữ liệu khi người dùng chủ động bấm.
 
-Để thử `At Startup` trên macOS, thoát Chrome hoàn toàn bằng `Cmd+Q`, rồi mở lại đúng profile. Đóng cửa sổ hoặc reload extension không phải là khởi động lại trình duyệt. [Tài liệu Chrome về onStartup](https://developer.chrome.com/docs/extensions/reference/api/runtime#event-onStartup).
+Bản 6.0 không có cơ chế xác nhận điểm mobile thực tế như 4.0. Kiểm tra điểm trên Rewards sau khi chạy thử.
 
-## 7. Các nút trong Settings
+## 6. Settings và xử lý lỗi
 
-- `User Manual / Open`: mở hướng dẫn cũ nếu có file manual đi kèm.
-- `Test Device / refresh`: đổi thiết bị mobile giả lập.
-- `Refresh Bing cache for Mobile searches`: bật/tắt làm mới cache; không xóa cookie đăng nhập.
-- `Keep Microsoft login during mobile`: luôn bật trong luồng tự động, kể cả với cấu hình cũ.
-- `Show Advance Logs`: bật log chi tiết để debug.
-- `Search Niche`: chọn nhóm từ khóa search.
-- `Perform`: chạy daily set và Keep earning ngay.
-- `Automate Activities after searches`: tự chạy activity sau khi search xong.
-- `Clear Bing data & login`: xóa dữ liệu và cookie Bing thủ công, có thể đăng xuất.
+- **Test Device / refresh**: đổi thiết bị mobile giả lập.
+- **Show Advance Logs**: bật log console chi tiết của worker. File diagnostic cuối phiên luôn ghi các phase, tiến độ search, trạng thái phiên ACT và lỗi dù tùy chọn này tắt; lưu ở Downloads/bingreward-logs. Log có phiên bản extension để kiểm tra đúng bản đang chạy.
+- **Search Niche**: chọn nhóm từ khóa có trong dữ liệu hiện tại.
+- **Download search history(24Hr)** / **Delete search history(24Hr)**: tải hoặc xóa lịch sử search trong 24 giờ.
+- **Download crash log** / **Clear crash log**: tải hoặc xóa nhật ký lỗi đã lưu.
+- **Reset Runtime data**: dừng phiên và xóa trạng thái chạy.
+- **Reset Extension**: dừng phiên và reset cấu hình.
+- **Clear Bing Browsing Data**: xóa dữ liệu Bing, có thể cần đăng nhập lại.
+- **Simulate Tab**: bật/tắt giả lập mobile trên tab hiện tại.
+- **User Manual / Open**: mở PDF hướng dẫn cũ; các thiết lập của bản này được mô tả trong README này.
 
-- `Simulate Tab`: bật/tắt giả lập mobile trên tab hiện tại.
-- `Download search history(24Hr)`: tải lịch sử search 24 giờ.
-- `Delete search history(24Hr)`: xóa lịch sử search 24 giờ.
-- `Reset Runtime data`: reset trạng thái đang chạy.
-- `Reset Extension`: reset toàn bộ cấu hình extension.
+Nếu nút không chạy:
 
-File chẩn đoán được lưu khi lượt chạy kết thúc trong `Downloads/bingreward-logs/diag-*.log`. Bật `Show Advance Logs` trước khi chạy để có đủ chi tiết. Daily set được xác nhận bằng điểm tăng hoặc trạng thái Completed của chính thẻ; mở một tab mới không được tính là hoàn thành. Thẻ cần thao tác riêng như referral có thể vẫn cần thực hiện thủ công.
+1. Đọc thông báo dưới nút. Popup chờ phản hồi worker tối đa 20 giây rồi báo lỗi.
+2. Kiểm tra đúng thư mục và phiên bản 6.0.4, rồi reload extension.
+3. Bật **Show Advance Logs**, mở **service worker** trong `chrome://extensions`, thử lại với `Desktop = 1`, `Mobile = 0`.
+4. Tải **crash log** nếu có lỗi. Không cần reset toàn bộ profile để kiểm tra lỗi khởi chạy.
 
-## 8. Khi bị lỗi hoặc tự dừng
+## 7. Kiểm tra mã nguồn
 
-Làm theo thứ tự này:
+Trong thư mục Bing 6.0, với Node.js và dependency đã cài:
 
-1. Bật `Show Advance Logs`.
-2. Vào `chrome://extensions`.
-3. Ở extension `Search Auto`, mở `service worker` console.
-4. Chạy lại acc bị lỗi.
-5. Xem log các dòng có `[QUERY]`, `[PERFORM]`, `[SEARCH]`, `[EMULATION]`, `[ACTIVITY]`.
-6. Nếu thấy lỗi content script hoặc mobile emulation, reload extension và chạy lại.
-7. Nếu chỉ một vài acc lỗi, kiểm tra đăng nhập Microsoft, dòng trạng thái và bộ đếm trên Rewards trước khi thử lại. Không dùng nút xóa dữ liệu đăng nhập để xử lý lỗi mobile.
-
-## 9. Cách cập nhật code mới
-
-Trong thư mục repo:
-
-```powershell
-git pull origin main
-```
-
-Sau đó mở `chrome://extensions` và bấm reload extension.
-
-## 10. Cách kiểm tra code trước khi dùng
-
-Trong thư mục repo:
-
-```powershell
-npm install
+```sh
+npm ci
 npm test -- --runInBand
 node tests/check_syntax.js
+npm run lint
 ```
 
-Nếu tất cả pass thì reload extension và chạy thử một acc trước khi chạy nhiều acc.
+Bản sửa đạt 400/400 kiểm thử, kiểm tra cú pháp và lint. Test popup dùng HTML/jQuery thực tế; test worker nạp graph module thực tế với Chrome API giả lập. Kết quả chưa xác nhận lượt chạy thực tế hoặc điểm Rewards trên profile Chrome của người dùng.

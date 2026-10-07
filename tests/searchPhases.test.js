@@ -45,51 +45,117 @@ function makeConfig(overrides = {}) {
 }
 
 describe("runSearchPhases()", () => {
-  test("refreshes cache while preserving login throughout mobile searches", async () => {
-    const config = makeConfig({
-      control: { clear: 1, act: 1, preserveRewards: 1 },
-    });
+  test("Stop during mobile skips the remaining cache clear and resets mobile state", async () => {
+    const config = makeConfig();
     const clearFn = jest.fn().mockResolvedValue(true);
-    const searchFn = jest.fn().mockResolvedValue(true);
-    const simulateFn = jest.fn().mockResolvedValue(true);
     const detachFn = jest.fn().mockResolvedValue();
-    const backupAuthCookiesFn = jest
-      .fn()
-      .mockResolvedValue([{ name: "session" }]);
-    const restoreAuthCookiesFn = jest.fn().mockResolvedValue(1);
-
-    const result = await runSearchPhases(
-      { desk: 0, mob: 3, min: 10, max: 20 },
+    await runSearchPhases(
+      { desk: 0, mob: 1, min: 7, max: 14 },
       "session-1",
       123,
       {
-        isSessionStillActive: () => true,
+        isSessionStillActive: () => Boolean(config.runtime.running),
         log: jest.fn(),
-        searchFn,
-        simulateFn,
+        searchFn: async () => {
+          config.runtime.running = 0;
+          return false;
+        },
+        simulateFn: jest.fn().mockResolvedValue(true),
         clearFn,
         setConfig: jest.fn().mockResolvedValue(),
         getConfig: () => config,
         delayFn: jest.fn().mockResolvedValue(),
         shortestDelay: 100,
         detachFn,
-        backupAuthCookiesFn,
-        restoreAuthCookiesFn,
       },
     );
-
-    expect(result).toBe(true);
-    expect(backupAuthCookiesFn).not.toHaveBeenCalled();
-    expect(clearFn).toHaveBeenCalledTimes(2);
+    expect(clearFn).toHaveBeenCalledTimes(1);
+    expect(clearFn).toHaveBeenCalledWith(true, false);
     expect(detachFn).toHaveBeenCalledWith(123, false);
-    expect(clearFn).toHaveBeenNthCalledWith(1, true, false);
-    expect(clearFn).toHaveBeenNthCalledWith(2, true, false);
-    expect(restoreAuthCookiesFn).not.toHaveBeenCalled();
-    expect(simulateFn).toHaveBeenCalledWith(123);
-    expect(searchFn).toHaveBeenCalledWith(3, 10, 20);
+    expect(config.runtime).toMatchObject({ running: 0, mobile: 0 });
   });
+  test.each([1, 0])(
+    "keeps Microsoft auth throughout PC, mobile and ACT with legacy preserveRewards=%s",
+    async (preserveRewards) => {
+      const config = makeConfig({
+        control: { clear: 1, act: 1, preserveRewards },
+      });
+      let signedIn = true;
+      let authStoragePresent = true;
+      const clearFn = jest.fn(async (_interruptible, clearCookies) => {
+        if (clearCookies) {
+          signedIn = false;
+          authStoragePresent = false;
+        }
+        return true;
+      });
+      const searchFn = jest.fn(async () => signedIn && authStoragePresent);
+      const simulateFn = jest.fn().mockResolvedValue(true);
+      const detachFn = jest.fn().mockResolvedValue();
+      const backupAuthCookiesFn = jest
+        .fn()
+        .mockResolvedValue([{ name: "session" }]);
+      const restoreAuthCookiesFn = jest.fn(async () => {
+        signedIn = true;
+        return 1;
+      });
 
-  test("an old disabled preserveRewards setting cannot enable automatic cookie deletion", async () => {
+      const result = await runSearchPhases(
+        { desk: 2, mob: 3, min: 10, max: 20 },
+        "session-1",
+        123,
+        {
+          isSessionStillActive: () => true,
+          log: jest.fn(),
+          searchFn,
+          simulateFn,
+          clearFn,
+          setConfig: jest.fn().mockResolvedValue(),
+          getConfig: () => config,
+          delayFn: jest.fn().mockResolvedValue(),
+          shortestDelay: 100,
+          detachFn,
+          backupAuthCookiesFn,
+          restoreAuthCookiesFn,
+        },
+      );
+
+      expect(result).toBe(true);
+      expect(backupAuthCookiesFn).not.toHaveBeenCalled();
+      expect(clearFn).toHaveBeenCalledTimes(2);
+      expect(detachFn).toHaveBeenCalledWith(123, false);
+      expect(clearFn).toHaveBeenNthCalledWith(1, true, false);
+      expect(clearFn).toHaveBeenNthCalledWith(2, true, false);
+      expect(restoreAuthCookiesFn).not.toHaveBeenCalled();
+      expect(simulateFn).toHaveBeenCalledWith(123);
+      expect(searchFn).toHaveBeenCalledWith(3, 10, 20);
+      const activityFn = jest.fn(async () => signedIn && authStoragePresent);
+      const postResult = await handlePostSearchTasks(
+        { desk: 2, mob: 3 },
+        "session-1",
+        123,
+        result,
+        {
+          isSessionStillActive: () => true,
+          log: jest.fn(),
+          detachFn,
+          clearFn,
+          delayFn: jest.fn().mockResolvedValue(),
+          createTabFn: jest.fn().mockResolvedValue({ id: 456 }),
+          removeTabFn: jest.fn().mockResolvedValue(),
+          activityFn,
+          shortestDelay: 100,
+          rewards: "https://rewards.bing.com/",
+          getConfig: () => config,
+        },
+      );
+      expect(activityFn).toHaveBeenCalledWith(456, true);
+      expect(postResult.runSuccessful).toBe(true);
+      expect(authStoragePresent).toBe(true);
+    },
+  );
+
+  test("refreshes cache without touching cookies even when old backup setting is disabled", async () => {
     const config = makeConfig({
       control: { clear: 1, act: 0, preserveRewards: 0 },
     });
@@ -123,7 +189,7 @@ describe("runSearchPhases()", () => {
     expect(clearFn).toHaveBeenNthCalledWith(2, true, false);
   });
 
-  test("simulation failure resets the mobile phase without touching auth cookies", async () => {
+  test("does not depend on cookie backup or restore APIs for mobile", async () => {
     const config = makeConfig({
       control: { clear: 1, act: 0, preserveRewards: 1 },
     });
@@ -132,7 +198,7 @@ describe("runSearchPhases()", () => {
       .fn()
       .mockResolvedValue({ complete: false });
 
-    const result = await runSearchPhases(
+    await runSearchPhases(
       { desk: 0, mob: 1, min: 10, max: 20 },
       "session-1",
       123,
@@ -140,7 +206,7 @@ describe("runSearchPhases()", () => {
         isSessionStillActive: () => true,
         log: jest.fn(),
         searchFn: jest.fn().mockResolvedValue(true),
-        simulateFn: jest.fn().mockResolvedValue(false),
+        simulateFn: jest.fn().mockResolvedValue(true),
         clearFn,
         setConfig: jest.fn().mockResolvedValue(),
         getConfig: () => config,
@@ -158,8 +224,6 @@ describe("runSearchPhases()", () => {
 
     expect(clearFn).toHaveBeenNthCalledWith(1, true, false);
     expect(restoreAuthCookiesFn).not.toHaveBeenCalled();
-    expect(result).toBe(false);
-    expect(config.runtime.mobile).toBe(0);
   });
 });
 

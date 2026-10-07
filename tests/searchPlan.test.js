@@ -41,14 +41,14 @@ describe("normalizeSearchPlan", () => {
     const plan = normalizeSearchPlan({
       desk: 30,
       mob: 20,
-      min: 12,
+      min: 8,
       max: 15,
       mode: "m3",
     });
     expect(plan).toMatchObject({
       desk: 30,
       mob: 20,
-      min: 12,
+      min: 8,
       max: 15,
       mode: "m3",
     });

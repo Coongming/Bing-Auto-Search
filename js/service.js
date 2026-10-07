@@ -20,8 +20,6 @@ import {
   get,
   resetRuntime,
   applyConfigDefaults,
-  getRewardsSearchCounterDone,
-  isDailySearchCounterDone,
 } from "/js/utils.js";
 import {
   getScheduleAlarmDelayMs,
@@ -38,6 +36,10 @@ import {
   cleanupAfterRun,
 } from "/js/search-phases.js";
 import { createDefaultConfig } from "/js/config-defaults.js";
+import {
+  readRewardsUserStatus,
+  createActivityScanTracker,
+} from "/js/activity-runtime.js";
 import { buildRewardsSnapshot, getScoreDelta } from "/js/rewards-metrics.js";
 import {
   sanitizeActivityAttempts,
@@ -53,23 +55,15 @@ import {
   hasSearchWork,
   chooseSearchTemplate as pickSearchTemplate,
 } from "/js/search-plan.js";
-import {
-  todayKey,
-  areCountersFresh,
-  limitPlanForCompletedCounters,
-} from "/js/daily-counters.js";
+import { todayKey } from "/js/daily-counters.js";
 import { ACTIONS } from "/js/messages.js";
 import {
   createDashboardActivityScript,
   createEarnActivityScript,
   createSolveActivityScript,
   createClaimReadyScript,
-  createActivityCompletionScript,
 } from "/js/injected-scripts.js";
 import { createCookieHelpers } from "/js/cookies.js";
-import { createRewardsReader } from "/js/rewards-client.js";
-import { createMobileCreditGuard } from "/js/mobile-credit.js";
-import { createStartupRetry, STARTUP_RETRY_ALARM } from "/js/startup-retry.js";
 import { installGlobalCrashHandlers, recordCrash } from "/js/crash-logger.js";
 
 import {
@@ -103,6 +97,11 @@ const msDomains = [
 ];
 let config = createDefaultConfig();
 let logs = config?.control?.log;
+// Core run diagnostics are collected even when verbose console logs are off.
+function diagnosticLog(message, level = "update") {
+  log(message, level, { console: Boolean(logs) });
+}
+let needPatch = false;
 let searchQuery = "";
 let usedSearchQueryTemplates = new Set();
 let shortestDelay = 1000;
@@ -217,7 +216,8 @@ const { restoreAuthCookiesDetailed } = createCookieHelpers({
   logEnabled: () => logs,
 });
 
-// Recover snapshots left by older versions. New automatic runs keep auth storage.
+// Older 6.0 builds deleted login cookies during mobile searches. Keep recovery
+// for snapshots left by those builds; automatic runs now preserve auth storage.
 const persistedAuthCookiesKey = "_pendingAuthCookieRestore";
 
 async function clearPersistedAuthCookieSnapshot() {
@@ -360,7 +360,9 @@ async function flushDiagnosticLog(tag = "run") {
     const header =
       `# Search Auto diagnostic log\n` +
       `# generated: ${new Date().toISOString()}\n` +
+      `# version: ${chrome.runtime.getManifest().version}\n` +
       `# tag: ${tag}\n` +
+      `# phase: ${config?.runtime?.currentPhase || "idle"} | searches submitted: ${config?.runtime?.done || 0} | failed: ${config?.runtime?.failed || 0}\n` +
       `# device: ${config?.device?.name || "?"} | schedule.mode: ${config?.schedule?.mode || "?"} | act: ${config?.control?.act ? 1 : 0}\n` +
       `# ------------------------------------------------------------\n`;
     const text = header + lines.join("\n") + "\n";
@@ -443,7 +445,6 @@ async function ensureAlarms() {
           );
       }
     }
-    await startupRetry.resume();
   } catch (error) {
     logs &&
       log(`[ALARMS] Could not ensure alarms: ${error.message}`, "warning");
@@ -460,10 +461,6 @@ function resetStaleSearchCounters() {
   return true;
 }
 
-function hasFreshSearchCounters() {
-  return areCountersFresh(config?.runtime, todayKey());
-}
-
 function resetSearchQueryHistory() {
   usedSearchQueryTemplates = new Set();
 }
@@ -474,49 +471,16 @@ const RunCoordinator = createRunCoordinator({
     config = newConfig;
     await set(config);
   },
-  log: (msg, level) => logs && log(msg, level),
+  log: diagnosticLog,
 });
 const isSessionStillActive = createIsSessionStillActive(
   () => config?.runtime?.currentSession,
 );
 
-const rewardsReader = createRewardsReader({
-  tabs: chrome.tabs,
-  waitForTab: (id) => wait(id, false),
-  sendMessage: (id, message) =>
-    sendTabMessage(id, message, "REWARDS", { attempts: 2 }),
-  log,
-});
-const startupRetry = createStartupRetry({
-  storage: chrome.storage.local,
-  alarms: chrome.alarms,
-  getMode: () => config?.schedule?.mode,
-  run: () => tryStartScheduledRun("STARTUP"),
-  log,
-});
-
-async function reportRunStatus(message, level = "update") {
-  config.runtime.lastRunMessage = message;
-  await set(config);
-  log(message, level);
-}
-
-function limitSearchPlanForToday(searches, options = {}) {
-  const basePlan = normalizeSearchPlan(searches);
-  const freshCounters = hasFreshSearchCounters();
-  const pcDone =
-    freshCounters && isDailySearchCounterDone(config?.runtime?.pcSearch);
-  const mobileDone =
-    freshCounters && isDailySearchCounterDone(config?.runtime?.mobileSearch);
-  const plan = limitPlanForCompletedCounters(basePlan, { pcDone, mobileDone });
-  if (!options.silent && (pcDone || mobileDone)) {
-    logs &&
-      log(
-        `[PLAN] Search plan limited for today's completed counters: desktop=${plan.desk}, mobile=${plan.mob}.`,
-        "update",
-      );
-  }
-  return plan;
+function limitSearchPlanForToday(searches) {
+  // Preserve 6.0's configured-count behavior. It does not trim the plan based
+  // on Rewards counters; URL confirmation below measures submitted searches.
+  return normalizeSearchPlan(searches);
 }
 
 function hasActivityQuota() {
@@ -534,7 +498,8 @@ function hasActivityWork(options = {}) {
 }
 
 function isScheduledModeActive() {
-  return isScheduleModeActive(config?.schedule);
+  const mode = (config?.schedule?.mode || "").match(/m[1-4]/)?.[0] || "m1";
+  return isScheduleModeActive({ ...config?.schedule, mode });
 }
 
 async function armScheduleAlarm(mode = config?.schedule?.mode) {
@@ -551,72 +516,45 @@ async function armScheduleAlarm(mode = config?.schedule?.mode) {
   return Boolean(armed);
 }
 
-async function checkRewardsApiSession(tabId = null) {
+async function checkRewardsApiSession() {
   try {
-    return Boolean(await rewardsReader.read(tabId));
+    return Boolean(await readRewardsUserStatus());
+  } catch {
+    return false;
+  }
+}
+
+async function checkRewardsTabSession(tabId) {
+  tabId = Number(tabId);
+  if (!tabId) return false;
+  try {
+    const response = await sendTabMessage(
+      tabId,
+      { action: "checkRewardsSession" },
+      "ACTIVITY",
+      { attempts: 2, delayMs: shortestDelay },
+    );
+    return Boolean(response?.active);
   } catch {
     return false;
   }
 }
 
 async function isRewardsSessionActive(tabId = null) {
-  return checkRewardsApiSession(tabId);
+  if (await checkRewardsApiSession()) return true;
+  if (tabId && (await checkRewardsTabSession(tabId))) return true;
+  return false;
 }
 
 async function refreshSearchCountersFromRewards() {
-  try {
-    const userStatus = await rewardsReader.read();
-    const counters = userStatus?.counters;
-    if (!counters || typeof counters !== "object" || Array.isArray(counters)) {
-      throw new Error(
-        "Rewards counters are unavailable for the current session.",
-      );
-    }
-    config.runtime.pcSearch = getRewardsSearchCounterDone(counters, "pcSearch");
-    config.runtime.mobileSearch = getRewardsSearchCounterDone(
-      counters,
-      "mobileSearch",
-    );
-    config.runtime.searchCounterDate = todayKey();
-    await set(config);
-    logs &&
-      log(
-        `[COUNTERS] Synced pcSearch=${config.runtime.pcSearch}, mobileSearch=${config.runtime.mobileSearch} for ${config.runtime.searchCounterDate}.`,
-        "update",
-      );
-    return true;
-  } catch (error) {
-    config.runtime.searchCounterDate = "";
-    await reportRunStatus(
-      `[COUNTERS] Cannot read Rewards: ${error.message}`,
-      "warning",
-    );
-    return false;
-  }
+  // Counter-based daily limits are disabled in 6.0. Account/score checks for
+  // activities still run separately; starting searches does not require login.
+  return false;
 }
 
 async function tryStartScheduledRun(source = "SCHEDULE") {
   if (!isScheduledModeActive() && config?.schedule?.mode !== "m2") {
-    return { retryable: false };
-  }
-  if (!RunCoordinator.canStartNewRun().allowed) {
-    return { retryable: true };
-  }
-
-  // Unknown counters are not the same as incomplete counters. Fail closed so a
-  // logged-out/API-failure state cannot trigger the full plan every few minutes.
-  const countersRefreshed = await refreshSearchCountersFromRewards();
-  if (!countersRefreshed) {
-    if (isScheduledModeActive()) {
-      await armScheduleAlarm(config?.schedule?.mode);
-    }
-    logs &&
-      log(
-        `[${source}] - Rewards counters unavailable; postponed scheduled run.`,
-        "warning",
-      );
-    await rewardsReader.release();
-    return { retryable: true };
+    return false;
   }
 
   const limitedPlan = limitSearchPlanForToday(config.schedule, {
@@ -625,8 +563,7 @@ async function tryStartScheduledRun(source = "SCHEDULE") {
   if (!hasSearchWork(limitedPlan) && !hasActivityWork()) {
     logs &&
       log(`[${source}] - No runnable work remaining for today.`, "update");
-    await rewardsReader.release();
-    return { retryable: false };
+    return false;
   }
 
   const runCheck = RunCoordinator.canStartNewRun();
@@ -636,24 +573,18 @@ async function tryStartScheduledRun(source = "SCHEDULE") {
         `[${source}] - Skipping scheduled run because another session is active (${runCheck.currentSession?.id}).`,
         "warning",
       );
-    return { retryable: true };
+    return false;
   }
 
   // Reset query history for fresh session
   resetSearchQueryHistory();
 
   const session = RunCoordinator.startNewSession("schedule");
-  if (!session) return { retryable: true };
+  if (!session) return false;
 
   // Single persistence: counters + session state
   await set(config);
-  const completion = initialise(config.schedule, session.id);
-  if (source === "STARTUP") {
-    completion.catch((error) => recordCrash("startup_run", error));
-  } else {
-    await completion;
-  }
-  return { started: true, retryable: false };
+  return initialise(config.schedule, session.id);
 }
 
 function chromeStorageGet(key) {
@@ -737,9 +668,10 @@ async function recordActivityRun(memory = null) {
   config.runtime.activityLastRunAt = runAt;
 }
 
-async function fetchRewardsSnapshot(tabId = null) {
+async function fetchRewardsSnapshot() {
   try {
-    return buildRewardsSnapshot(await rewardsReader.read(tabId));
+    const status = await readRewardsUserStatus();
+    return status ? buildRewardsSnapshot(status) : null;
   } catch (error) {
     logs &&
       log(
@@ -929,7 +861,7 @@ async function wait(tabId, interruptible = true) {
 
 async function clear(interruptible = true, clearCookies = false) {
   if (interruptible && !config?.runtime?.running) {
-    logs && log("[CLEAR] Interrupted, skipping clear.", "warning");
+    diagnosticLog("[CLEAR] Interrupted, skipping clear.", "warning");
     return false;
   }
   const tabId = config?.runtime?.rsaTab;
@@ -940,8 +872,10 @@ async function clear(interruptible = true, clearCookies = false) {
     });
     await wait(tabId);
     await delay(shortestDelay, interruptible);
-    logs &&
-      log(`[CLEAR] Tab updated to loading page: ${loading}clear`, "update");
+    diagnosticLog(
+      `[CLEAR] Tab updated to loading page: ${loading}clear`,
+      "update",
+    );
   }
 
   try {
@@ -965,11 +899,10 @@ async function clear(interruptible = true, clearCookies = false) {
       dataToRemove,
     );
     await delay(shortestDelay, interruptible);
-    logs &&
-      log(
-        `[CLEAR] Browsing data cleared (${clearCookies ? "including" : "preserving"} auth storage).`,
-        "success",
-      );
+    diagnosticLog(
+      `[CLEAR] Browsing data cleared (${clearCookies ? "including" : "preserving"} auth storage).`,
+      "success",
+    );
   } catch (error) {
     log(`[CLEAR] Error clearing browsing data: ${error.message}`, "error");
     return false;
@@ -980,8 +913,10 @@ async function clear(interruptible = true, clearCookies = false) {
       url: originalUrl,
     });
     await wait(tabId);
-    logs &&
-      log(`[CLEAR] Tab updated to original URL: ${originalUrl}`, "update");
+    diagnosticLog(
+      `[CLEAR] Tab updated to original URL: ${originalUrl}`,
+      "update",
+    );
   }
   return true;
 }
@@ -1019,7 +954,6 @@ function startSearchKeepalive(tabId) {
 async function bootstrapConfig() {
   try {
     const stored = await get();
-    await restorePendingAuthCookies();
     await applyStoredConfig(stored, "bootstrap");
     await ensureAlarms();
     logs && log("[BOOTSTRAP] - Config loaded.", "update");
@@ -1050,7 +984,6 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
 });
 
 async function handleUserStop() {
-  await startupRetry.cancel();
   if (searchKeepaliveCancel) {
     searchKeepaliveCancel();
     searchKeepaliveCancel = null;
@@ -1066,10 +999,14 @@ async function handleUserStop() {
         log(`[STOP] Could not close RSA tab: ${error.message}`, "warning");
     }
   }
+  // A new run may start while the old tab is being detached/closed. Its
+  // runtime and badge belong to that new session, not this Stop completion.
+  if (config.runtime.running || config.runtime.currentSession) return;
   config.runtime.rsaTab = null;
   config.runtime.mobile = 0;
   config.runtime.act = 0;
   config.runtime.currentPhase = null;
+  config.runtime.lastRunMessage = "Run stopped.";
   await set(config);
   try {
     await chrome.action.setBadgeText({ text: "" });
@@ -1077,6 +1014,30 @@ async function handleUserStop() {
     logs && log(`[STOP] Could not clear badge: ${error.message}`, "warning");
   }
 }
+
+// Registered synchronously at top level (MV3 requirement) so the listener is
+// reinstated whenever the worker respawns and can wake it on navigation. The
+// handler no-ops until config is ready thanks to optional chaining.
+const handleMsNavigation = ({ tabId, url }) => {
+  tabId = Number(tabId);
+  if (tabId === config?.runtime?.rsaTab) return;
+  if (
+    url &&
+    msDomains.some((domain) => url.includes(domain)) &&
+    config?.runtime?.running &&
+    config?.runtime?.mobile &&
+    config?.control?.clear &&
+    !config?.runtime?.act
+  ) {
+    needPatch = true;
+    logs &&
+      log(
+        `[WATCHER] - (Patch Required) MS domain navigation detected in tab ${tabId}: ${url}`,
+        "warning",
+      );
+  }
+};
+chrome.webNavigation.onCommitted.addListener(handleMsNavigation);
 
 async function isDebuggerAttached(tabId) {
   tabId = Number(tabId);
@@ -1215,16 +1176,15 @@ async function attach(tabId, interruptible = true) {
 
 async function simulate(tabId, interruptible = true) {
   if (interruptible && !config?.runtime?.running) {
-    logs &&
-      log(
-        `[SIMULATE] Interrupted, skipping simulate for tab ${tabId}.`,
-        "warning",
-      );
+    diagnosticLog(
+      `[SIMULATE] Interrupted, skipping simulate for tab ${tabId}.`,
+      "warning",
+    );
     return false;
   }
   tabId = Number(tabId);
   const originalUrl = await getTabUrl(tabId);
-  logs && log(`[SIMULATE] - Simulating tab ${tabId}...`, "update");
+  diagnosticLog(`[SIMULATE] - Simulating tab ${tabId}...`, "update");
 
   if (!tabId || !originalUrl) {
     log(`[SIMULATE] - Invalid tabId or URL. Skipping...`, "warning");
@@ -1236,7 +1196,7 @@ async function simulate(tabId, interruptible = true) {
     attached = await attach(tabId, interruptible);
     if (!attached) return false;
     await delay(shortestDelay, interruptible);
-    logs && log(`[SIMULATE] - Debugger attached to tab ${tabId}.`, "success");
+    diagnosticLog(`[SIMULATE] - Debugger attached to tab ${tabId}.`, "success");
   }
   await installFingerprintPatch(tabId);
 
@@ -1245,22 +1205,20 @@ async function simulate(tabId, interruptible = true) {
       url: loading + "simulate",
     });
     await wait(tabId);
-    logs &&
-      log(
-        `[SIMULATE] - Tab updated to loading page: ${loading}simulate`,
-        "update",
-      );
+    diagnosticLog(
+      `[SIMULATE] - Tab updated to loading page: ${loading}simulate`,
+      "update",
+    );
     await delay(shortestDelay, interruptible);
   }
 
   try {
     const stillAttached = await isDebuggerAttached(tabId);
     if (!stillAttached) {
-      logs &&
-        log(
-          `[SIMULATE] - Debugger not attached before emulation commands. Re-attaching...`,
-          "warning",
-        );
+      diagnosticLog(
+        `[SIMULATE] - Debugger not attached before emulation commands. Re-attaching...`,
+        "warning",
+      );
       await attach(tabId, interruptible);
     }
 
@@ -1271,8 +1229,10 @@ async function simulate(tabId, interruptible = true) {
       ),
       shortestDelay,
     );
-    logs &&
-      log(`[SIMULATE] - Device metrics cleared for tab ${tabId}.`, "success");
+    diagnosticLog(
+      `[SIMULATE] - Device metrics cleared for tab ${tabId}.`,
+      "success",
+    );
 
     const deviceMetrics = {
       mobile: true,
@@ -1290,13 +1250,12 @@ async function simulate(tabId, interruptible = true) {
       ),
       shortestDelay,
     );
-    logs &&
-      log(
-        `[SIMULATE] - Device metrics set for tab ${tabId}: ${JSON.stringify(
-          deviceMetrics,
-        )}`,
-        "success",
-      );
+    diagnosticLog(
+      `[SIMULATE] - Device metrics set for tab ${tabId}: ${JSON.stringify(
+        deviceMetrics,
+      )}`,
+      "success",
+    );
 
     await race(
       chrome.debugger.sendCommand(
@@ -1306,11 +1265,10 @@ async function simulate(tabId, interruptible = true) {
       ),
       shortestDelay,
     );
-    logs &&
-      log(
-        `[SIMULATE] - User agent overridden for tab ${tabId}: ${config?.device?.ua}`,
-        "success",
-      );
+    diagnosticLog(
+      `[SIMULATE] - User agent overridden for tab ${tabId}: ${config?.device?.ua}`,
+      "success",
+    );
 
     await race(
       chrome.debugger.sendCommand({ tabId }, "Network.setBypassServiceWorker", {
@@ -1318,11 +1276,10 @@ async function simulate(tabId, interruptible = true) {
       }),
       shortestDelay,
     );
-    logs &&
-      log(
-        `[SIMULATE] - Bypass service worker enabled for tab ${tabId}.`,
-        "success",
-      );
+    diagnosticLog(
+      `[SIMULATE] - Bypass service worker enabled for tab ${tabId}.`,
+      "success",
+    );
 
     await race(
       chrome.debugger.sendCommand(
@@ -1336,8 +1293,10 @@ async function simulate(tabId, interruptible = true) {
       ),
       shortestDelay,
     );
-    logs &&
-      log(`[SIMULATE] - Touch emulation enabled for tab ${tabId}.`, "success");
+    diagnosticLog(
+      `[SIMULATE] - Touch emulation enabled for tab ${tabId}.`,
+      "success",
+    );
 
     await race(
       chrome.debugger.sendCommand(
@@ -1350,17 +1309,15 @@ async function simulate(tabId, interruptible = true) {
       ),
       shortestDelay,
     );
-    logs &&
-      log(
-        `[SIMULATE] - Mouse events set for touch for tab ${tabId}.`,
-        "success",
-      );
+    diagnosticLog(
+      `[SIMULATE] - Mouse events set for touch for tab ${tabId}.`,
+      "success",
+    );
     await delay(shortestDelay, interruptible);
-    logs &&
-      log(
-        `[SIMULATE] - Done for ${tabId} using device ${config.device.name}`,
-        "update",
-      );
+    diagnosticLog(
+      `[SIMULATE] - Done for ${tabId} using device ${config.device.name}`,
+      "update",
+    );
   } catch (error) {
     log(`[SIMULATE] - Error simulating tab: ${error.message}`, "error");
     await detach(tabId).catch(() => {});
@@ -1372,8 +1329,10 @@ async function simulate(tabId, interruptible = true) {
       url: originalUrl,
     });
     await wait(tabId);
-    logs &&
-      log(`[SIMULATE] Tab updated to original URL: ${originalUrl}`, "update");
+    diagnosticLog(
+      `[SIMULATE] Tab updated to original URL: ${originalUrl}`,
+      "update",
+    );
     await delay(shortestDelay, interruptible);
 
     try {
@@ -1400,11 +1359,10 @@ async function simulate(tabId, interruptible = true) {
         ),
         shortestDelay,
       );
-      logs &&
-        log(
-          `[SIMULATE] - Re-applied emulation after navigation for tab ${tabId}.`,
-          "success",
-        );
+      diagnosticLog(
+        `[SIMULATE] - Re-applied emulation after navigation for tab ${tabId}.`,
+        "success",
+      );
     } catch (error) {
       log(
         `[SIMULATE] - Error re-applying emulation after navigation: ${error.message}`,
@@ -1812,6 +1770,9 @@ async function click(interruptible = true) {
     );
     await delay(shortestDelay, interruptible);
   }
+  if (needPatch) {
+    needPatch = false;
+  }
   return success;
 }
 
@@ -2105,26 +2066,27 @@ async function search(searches, min, max, interruptible = true) {
   min = Math.max(minimumSearchDelay, min);
   if (max < min) max = min;
   if (interruptible && !config?.runtime?.running) {
-    logs && log("[SEARCH] Interrupted, skipping search operation.", "warning");
+    diagnosticLog(
+      "[SEARCH] Interrupted, skipping search operation.",
+      "warning",
+    );
     return false;
   }
   if (!navigator.onLine) {
-    logs &&
-      log(
-        "[SEARCH] No internet connection, skipping search operation.",
-        "warning",
-      );
+    diagnosticLog(
+      "[SEARCH] No internet connection, skipping search operation.",
+      "warning",
+    );
     return false;
   }
   if (!searches) {
-    logs &&
-      log(
-        "[SEARCH] No searches provided, skipping search operation.",
-        "warning",
-      );
+    diagnosticLog(
+      "[SEARCH] No searches provided, skipping search operation.",
+      "warning",
+    );
     return false;
   }
-  logs && log("[SEARCH] Starting search operation...", "update");
+  diagnosticLog("[SEARCH] Starting search operation...", "update");
   const tabId = Number(config?.runtime?.rsaTab);
   const originalUrl = await getTabUrl(tabId);
   const clearIt = config?.control?.clear;
@@ -2137,20 +2099,11 @@ async function search(searches, min, max, interruptible = true) {
     });
     await wait(tabId);
     await delay(shortestDelay, interruptible);
-    logs && log(`[SEARCH] Tab updated to Bing URL: ${bing}`, "update");
+    diagnosticLog(`[SEARCH] Tab updated to Bing URL: ${bing}`, "update");
   }
   searchKeepaliveCancel = startSearchKeepalive(tabId);
 
   let successfulSearches = 0;
-  let mobileComplete = false;
-  const mobileCredit = config?.runtime?.mobile
-    ? createMobileCreditGuard({
-        readSnapshot: () => fetchRewardsSnapshot(),
-        delay: (ms) => delay(ms, interruptible),
-        report: reportRunStatus,
-        isActive: () => Boolean(config?.runtime?.running),
-      })
-    : null;
   const updateProgressBadge = async () => {
     const total = Number(config?.runtime?.total) || searches || 1;
     await chrome.action.setBadgeText({
@@ -2171,7 +2124,10 @@ async function search(searches, min, max, interruptible = true) {
   };
   const waitAfterIteration = async (index, readDelay, searched = true) => {
     if (!searched) {
-      logs && log("[SEARCH] Waiting briefly after failed search...", "update");
+      diagnosticLog(
+        "[SEARCH] Waiting briefly after failed search...",
+        "update",
+      );
       await delay(
         randomBetween(failedSearchSettleDelayMin, failedSearchSettleDelayMax),
         interruptible,
@@ -2181,12 +2137,18 @@ async function search(searches, min, max, interruptible = true) {
 
     if (index === searches - 1) {
       const finalDelay = Math.min(readDelay, finalSearchSettleDelayMax);
-      logs && log("[SEARCH] Waiting for final results read delay...", "update");
+      diagnosticLog(
+        "[SEARCH] Waiting for final results read delay...",
+        "update",
+      );
       await delay(finalDelay, interruptible);
       return;
     }
 
-    logs && log("[SEARCH] Waiting on results before next search...", "update");
+    diagnosticLog(
+      "[SEARCH] Waiting on results before next search...",
+      "update",
+    );
     await delay(readDelay, interruptible);
     await delay(
       randomBetween(betweenSearchDelayMin, betweenSearchDelayMax),
@@ -2195,30 +2157,34 @@ async function search(searches, min, max, interruptible = true) {
   };
 
   try {
-    if (mobileCredit && !(await mobileCredit.start())) return false;
-    if (mobileCredit?.isComplete()) {
-      await reportRunStatus(
-        "Mobile Rewards counter is already complete for today.",
-        "success",
-      );
-      return true;
-    }
     for (let i = 0; i < searches; i++) {
+      let clickedForPatch = false;
       if (interruptible && !config?.runtime?.running) {
-        logs &&
-          log("[SEARCH] Interrupted, skipping search operation.", "warning");
+        diagnosticLog(
+          "[SEARCH] Interrupted, skipping search operation.",
+          "warning",
+        );
         return false;
       }
       if (!navigator.onLine) {
-        logs &&
-          log(
-            "[SEARCH] No internet connection, skipping search operation.",
-            "warning",
-          );
+        diagnosticLog(
+          "[SEARCH] No internet connection, skipping search operation.",
+          "warning",
+        );
         return false;
       }
+      if (needPatch && clearIt && config?.runtime?.mobile) {
+        diagnosticLog(
+          "[SEARCH] Mobile patch: refreshing cache while preserving Microsoft login...",
+          "warning",
+        );
+        await clear(interruptible, false);
+        await delay(shortestDelay, interruptible);
+        clickedForPatch = await click(interruptible);
+        await delay(shortestDelay, interruptible);
+      }
       const readDelay = getReadDelay();
-      if (clearIt && i < 3) {
+      if (clearIt && i < 3 && !clickedForPatch) {
         await chrome.tabs.update(tabId, {
           active: true,
         });
@@ -2231,7 +2197,7 @@ async function search(searches, min, max, interruptible = true) {
         config.runtime.failed++;
         await set(config);
         await updateProgressBadge();
-        logs && log(`[SEARCH] Query failed for ${searchQuery}.`, "error");
+        diagnosticLog(`[SEARCH] Query failed for ${searchQuery}.`, "error");
         await waitAfterIteration(i, readDelay, false);
         continue;
       }
@@ -2254,34 +2220,21 @@ async function search(searches, min, max, interruptible = true) {
         });
         await wait(tabId);
         config.runtime.failed++;
-        logs &&
-          log(
-            `[SEARCH] Search ${i + 1} failed with query: ${searchQuery}.`,
-            "error",
-          );
+        diagnosticLog(
+          `[SEARCH] Search ${i + 1} failed with query: ${searchQuery}.`,
+          "error",
+        );
       } else {
         config.runtime.done++;
         successfulSearches++;
-        logs &&
-          log(
-            `[SEARCH] Search ${i + 1} performed with query: ${searchQuery}.`,
-            "success",
-          );
+        diagnosticLog(
+          `[SEARCH] Search ${i + 1} performed with query: ${searchQuery}.`,
+          "success",
+        );
       }
       await set(config);
       await updateProgressBadge();
       await waitAfterIteration(i, readDelay, searched);
-      if (mobileCredit && searched) {
-        const credit = await mobileCredit.check(
-          successfulSearches,
-          i === searches - 1,
-        );
-        if (!credit.ok) return false;
-        if (credit.complete) {
-          mobileComplete = true;
-          break;
-        }
-      }
     }
   } finally {
     if (searchKeepaliveCancel) {
@@ -2291,7 +2244,10 @@ async function search(searches, min, max, interruptible = true) {
   }
 
   if (interruptible && !config?.runtime?.running) {
-    logs && log("[SEARCH] Search phase stopped before completion.", "warning");
+    diagnosticLog(
+      "[SEARCH] Search phase stopped before completion.",
+      "warning",
+    );
     return false;
   }
   await chrome.tabs.update(tabId, {
@@ -2299,19 +2255,17 @@ async function search(searches, min, max, interruptible = true) {
   });
   await wait(tabId);
   if (successfulSearches === 0) {
-    logs &&
-      log(
-        "[SEARCH] Phase completed, but no searches were confirmed.",
-        "warning",
-      );
+    diagnosticLog(
+      "[SEARCH] Phase completed, but no searches were confirmed.",
+      "warning",
+    );
     return false;
   }
-  if (!mobileComplete && !isCompleteSearchCount(successfulSearches, searches)) {
-    logs &&
-      log(
-        `[SEARCH] Phase incomplete: ${successfulSearches}/${searches} searches confirmed.`,
-        "warning",
-      );
+  if (!isCompleteSearchCount(successfulSearches, searches)) {
+    diagnosticLog(
+      `[SEARCH] Phase incomplete: ${successfulSearches}/${searches} searches confirmed.`,
+      "warning",
+    );
     return false;
   }
   return true;
@@ -2387,30 +2341,35 @@ async function waitForUrl(
   });
 }
 
-async function completeRewardActivityTab(tabId) {
+async function completeRewardActivityTab(
+  tabId,
+  shouldContinue = isRuntimeActive,
+) {
   tabId = Number(tabId);
   if (!tabId) return false;
 
   let attachedHere = false;
   let interactions = 0;
   try {
-    if (!config?.runtime?.running) return false;
+    if (!shouldContinue()) return false;
     const loaded = await wait(tabId, true);
-    if (!loaded || !config?.runtime?.running) return false;
+    if (!loaded || !shouldContinue()) return false;
     await delay(mediumDelay, true);
-    if (!config?.runtime?.running) return false;
+    if (!shouldContinue()) return false;
 
     const alreadyAttached = await isDebuggerAttached(tabId);
     if (!alreadyAttached) {
       attachedHere = await attach(tabId, false);
     }
     if (!alreadyAttached && !attachedHere) return false;
+    if (!shouldContinue()) return false;
 
     await enableDomains(tabId);
 
     const solveScript = createSolveActivityScript();
 
     for (let attempt = 0; attempt < 8; attempt++) {
+      if (!shouldContinue()) break;
       const result = await race(
         chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
           expression: solveScript,
@@ -2432,9 +2391,9 @@ async function completeRewardActivityTab(tabId) {
       interactions++;
       logs &&
         log(`[ACTIVITY] Reward tab ${tabId} clicked: ${value.text}`, "update");
-      if (!config?.runtime?.running) break;
+      if (!shouldContinue()) break;
       await delay(1200 + Math.random() * 800, true);
-      if (!config?.runtime?.running) break;
+      if (!shouldContinue()) break;
       await wait(tabId, true);
     }
   } catch (error) {
@@ -2468,19 +2427,23 @@ async function processOpenedActivityTabs(
   mainTabId,
   existingTabIds,
   returnUrl = rewards + "dashboard",
+  shouldContinue = isRuntimeActive,
 ) {
   const allTabs = await chrome.tabs.query({});
+  if (!shouldContinue()) return 0;
   const newTabs = allTabs.filter((tab) =>
     isActivityOpenedTab(tab, mainTabId, existingTabIds),
   );
   let processed = 0;
   for (const tab of newTabs) {
+    if (!shouldContinue()) break;
     const loaded = await waitForUrl(
       tab.id,
       (url) => Boolean(url && url !== "about:blank"),
       longestDelay,
     );
     const tabUrl = loaded.url || (await getTabUrl(tab.id));
+    if (!shouldContinue()) break;
     if (!isRewardActivityUrl(tabUrl)) {
       logs &&
         log(
@@ -2489,7 +2452,7 @@ async function processOpenedActivityTabs(
         );
       continue;
     }
-    const completed = await completeRewardActivityTab(tab.id);
+    const completed = await completeRewardActivityTab(tab.id, shouldContinue);
     await delay(shortestDelay, false);
     try {
       await chrome.tabs.remove(tab.id);
@@ -2504,13 +2467,19 @@ async function processOpenedActivityTabs(
       );
   }
 
+  if (!shouldContinue()) return processed;
   const mainUrl = await getTabUrl(mainTabId);
   if (
+    shouldContinue() &&
     mainUrl &&
     isRewardActivityUrl(mainUrl) &&
     !mainUrl.startsWith(returnUrl)
   ) {
-    const completed = await completeRewardActivityTab(mainTabId);
+    const completed = await completeRewardActivityTab(
+      mainTabId,
+      shouldContinue,
+    );
+    if (!shouldContinue()) return processed;
     await chrome.tabs.update(mainTabId, { url: returnUrl, active: true });
     await wait(mainTabId);
     if (completed) {
@@ -2543,7 +2512,13 @@ async function closeOpenedActivityTabs(mainTabId, existingTabIds) {
   return closed;
 }
 
-async function dispatchTrustedPress(tabId, point, context = "ACTIVITY") {
+async function dispatchTrustedPress(
+  tabId,
+  point,
+  context = "ACTIVITY",
+  shouldContinue = isRuntimeActive,
+) {
+  if (!shouldContinue()) return false;
   const x = Number(point?.x);
   const y = Number(point?.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
@@ -2553,6 +2528,7 @@ async function dispatchTrustedPress(tabId, point, context = "ACTIVITY") {
       x,
       y,
     });
+    if (!shouldContinue()) return false;
     await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
       type: "mousePressed",
       x,
@@ -2581,37 +2557,18 @@ async function dispatchTrustedPress(tabId, point, context = "ACTIVITY") {
   }
 }
 
-async function readCompletedActivityKeys(tabId, items) {
-  if (!items.length) return [];
-  try {
-    const result = await race(
-      chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
-        expression: createActivityCompletionScript(items),
-        returnByValue: true,
-      }),
-      longestDelay,
-    );
-    return result?.result?.value?.completedKeys || [];
-  } catch (error) {
-    log(
-      `[ACTIVITY] Cannot confirm card completion: ${error.message}`,
-      "warning",
-    );
-    return [];
-  }
-}
-
 async function runDashboardActivityPass(
   tabId,
   memory,
   sessionVisited,
   sessionMisses,
   pass,
+  shouldContinue = isRuntimeActive,
 ) {
   const tabsBefore = await chrome.tabs.query({});
   const existingTabIds = new Set(tabsBefore.map((tab) => tab.id));
   const blockedKeys = getBlockedActivityKeys(memory, sessionVisited);
-  const beforeScore = await fetchRewardsSnapshot(tabId);
+  if (!shouldContinue()) return { clicked: 0, processed: 0 };
   const dashboardScript = createDashboardActivityScript(
     [...blockedKeys],
     1,
@@ -2625,49 +2582,78 @@ async function runDashboardActivityPass(
     longestDelay,
     `Failed to scan rewards dashboard pass ${pass}.`,
   ).catch((error) => {
-    logs &&
-      log(
-        `[ACTIVITY] Dashboard pass ${pass} failed: ${error.message}`,
-        "warning",
-      );
+    diagnosticLog(
+      `[ACTIVITY] Dashboard pass ${pass} failed: ${error.message}`,
+      "warning",
+    );
     return null;
   });
 
   const value = result?.result?.value || {};
+  if (!shouldContinue()) return { clicked: 0, processed: 0 };
   let clickedItems = value.clicked || [];
   const skippedItems = value.skipped || [];
+  if (clickedItems.length === 0) {
+    diagnosticLog(
+      `[ACTIVITY] Dashboard scan ${pass}: ${value.reason || "no runnable cards"}.`,
+      "update",
+    );
+    return {
+      clicked: 0,
+      attempted: 0,
+      processed: 0,
+      skipped: skippedItems.length,
+      retry: Boolean(value.retry),
+      scanPosition: value.scanPosition,
+      pointDelta: null,
+    };
+  }
+  // Do not poll points or wait for child tabs when the scan found no action.
+  const beforeScore = await fetchRewardsSnapshot();
+  if (!shouldContinue()) return { clicked: 0, processed: 0 };
   if (clickedItems.length > 0 && value.pressPoint) {
     const pressed = await dispatchTrustedPress(
       tabId,
       value.pressPoint,
       "DAILY SET",
+      shouldContinue,
     );
     if (!pressed) clickedItems = [];
   }
   if (value.reason) {
-    logs &&
-      log(`[ACTIVITY] Dashboard pass ${pass}: ${value.reason}.`, "warning");
+    diagnosticLog(
+      `[ACTIVITY] Dashboard pass ${pass}: ${value.reason}.`,
+      "warning",
+    );
   }
   if (clickedItems.length > 0) {
-    logs &&
-      log(
-        `[ACTIVITY] Pass ${pass} clicked ${clickedItems.length} dashboard items.`,
-        "success",
-      );
+    diagnosticLog(
+      `[ACTIVITY] Pass ${pass} clicked ${clickedItems.length} dashboard items.`,
+      "success",
+    );
     for (const item of clickedItems) {
-      logs && log(`[ACTIVITY]   clicked ${item.type}: ${item.text}`, "update");
+      diagnosticLog(
+        `[ACTIVITY]   clicked ${item.type}: ${item.text}`,
+        "update",
+      );
     }
   }
   if (skippedItems.length > 0) {
-    logs &&
-      log(
-        `[ACTIVITY] Pass ${pass} skipped ${skippedItems.length} completed items.`,
-        "update",
-      );
+    diagnosticLog(
+      `[ACTIVITY] Pass ${pass} skipped ${skippedItems.length} completed items.`,
+      "update",
+    );
   }
 
-  await delay(4000 + Math.random() * 2500, false);
-  const processedTabs = await processOpenedActivityTabs(tabId, existingTabIds);
+  await delay(4000 + Math.random() * 2500, true);
+  if (!shouldContinue()) return { clicked: 0, processed: 0 };
+  const processedTabs = await processOpenedActivityTabs(
+    tabId,
+    existingTabIds,
+    rewards + "dashboard",
+    shouldContinue,
+  );
+  if (!shouldContinue()) return { clicked: 0, processed: 0 };
   const nonExpandClicks = clickedItems.filter((item) => item.type !== "expand");
   if (nonExpandClicks.length > 0 || processedTabs > 0) {
     await chrome.tabs.update(tabId, {
@@ -2675,31 +2661,41 @@ async function runDashboardActivityPass(
       active: true,
     });
     await wait(tabId);
-    await delay(mediumDelay, false);
+    await delay(mediumDelay, true);
   }
-  const afterScore = await fetchRewardsSnapshot(tabId);
+  if (!shouldContinue()) return { clicked: 0, processed: 0 };
+  const afterScore = await fetchRewardsSnapshot();
+  if (!shouldContinue()) return { clicked: 0, processed: 0 };
   let pointDelta = getScoreDelta(beforeScore, afterScore);
   if (afterScore && Number.isFinite(afterScore.score)) {
     memory.lastScore = afterScore.score;
   }
-  // Points can lag the card click. A newly opened tab alone is not completion;
-  // give the score another chance to update before checking the card itself.
+  // Points from a just-clicked card can lag the getuserinfo API by several
+  // seconds. If we clicked something but neither a processed tab nor a positive
+  // delta confirms it yet, wait longer and re-check once before deciding it was
+  // a miss (a miss twice gets the card blocked for the rest of the session).
   if (
     clickedItems.length > 0 &&
+    processedTabs === 0 &&
     !(Number.isFinite(pointDelta) && pointDelta > 0)
   ) {
-    await delay(4000 + Math.random() * 2000, false);
-    const retryScore = await fetchRewardsSnapshot(tabId);
+    await delay(4000 + Math.random() * 2000, true);
+    if (!shouldContinue()) return { clicked: 0, processed: 0 };
+    const retryScore = await fetchRewardsSnapshot();
+    if (!shouldContinue()) return { clicked: 0, processed: 0 };
     const retryDelta = getScoreDelta(beforeScore, retryScore);
     if (Number.isFinite(retryDelta)) pointDelta = retryDelta;
     if (retryScore && Number.isFinite(retryScore.score)) {
       memory.lastScore = retryScore.score;
     }
   }
-  // Confirm points or Completed on this card, never a neighbouring card's tick.
-  const completedKeys = await readCompletedActivityKeys(tabId, clickedItems);
-  const confirmedClick =
-    completedKeys.length > 0 || (Number.isFinite(pointDelta) && pointDelta > 0);
+  // Only a positive score delta confirms a click; a clicked-but-zero-delta card
+  // stays a retryable miss (so multi-step quizzes get another pass). The
+  // re-check above is what rescues the (often first) card whose points merely
+  // register slowly, without falsely confirming a tab that opened but earned 0.
+  const confirmedClick = Number.isFinite(pointDelta)
+    ? pointDelta > 0
+    : processedTabs > 0;
   let retryableMiss = false;
   if (confirmedClick) {
     confirmActivityKeys(
@@ -2715,20 +2711,18 @@ async function runDashboardActivityPass(
       sessionMisses,
     );
     retryableMiss = missed.retryable;
-    logs &&
-      log(
-        `[ACTIVITY] Pass ${pass} daily-set click did not open/score; ${retryableMiss ? "retrying" : "moving on"}.`,
-        "warning",
-      );
+    diagnosticLog(
+      `[ACTIVITY] Pass ${pass} daily-set click did not open/score; ${retryableMiss ? "retrying" : "moving on"}.`,
+      "warning",
+    );
   }
   await saveActivityMemory(memory);
 
   if (pointDelta !== null) {
-    logs &&
-      log(
-        `[ACTIVITY] Pass ${pass} score delta: ${pointDelta >= 0 ? "+" : ""}${pointDelta}.`,
-        pointDelta > 0 ? "success" : "warning",
-      );
+    diagnosticLog(
+      `[ACTIVITY] Pass ${pass} score delta: ${pointDelta >= 0 ? "+" : ""}${pointDelta}.`,
+      pointDelta > 0 ? "success" : "warning",
+    );
   }
 
   log(
@@ -2736,7 +2730,7 @@ async function runDashboardActivityPass(
       clickedItems.map((c) => c.text),
     )} skipped=${JSON.stringify(
       skippedItems.map((s) => (s.reason ? `${s.text} <${s.reason}>` : s.text)),
-    )} reason=${value.reason || "-"} delta=${pointDelta} processedTabs=${processedTabs} completedCards=${completedKeys.length} confirmed=${confirmedClick}`,
+    )} reason=${value.reason || "-"} delta=${pointDelta} processedTabs=${processedTabs} confirmed=${confirmedClick}`,
     "update",
   );
 
@@ -2748,6 +2742,7 @@ async function runDashboardActivityPass(
     skipped: skippedItems.length,
     retry: Boolean(value.retry) || retryableMiss,
     pointDelta,
+    scanPosition: value.scanPosition,
   };
 }
 
@@ -2757,13 +2752,14 @@ async function runEarnActivityPass(
   sessionVisited,
   sessionMisses,
   pass,
+  shouldContinue = isRuntimeActive,
 ) {
   const earnUrl = rewards + "earn";
   const tabsBefore = await chrome.tabs.query({});
   const existingTabIds = new Set(tabsBefore.map((tab) => tab.id));
   const blockedKeys = getBlockedActivityKeys(memory, sessionVisited);
-  const beforeScore = await fetchRewardsSnapshot(tabId);
-  const earnScript = createEarnActivityScript([...blockedKeys], 1);
+  if (!shouldContinue()) return { clicked: 0, processed: 0 };
+  const earnScript = createEarnActivityScript([...blockedKeys], 1, true);
   const result = await race(
     chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
       expression: earnScript,
@@ -2772,47 +2768,82 @@ async function runEarnActivityPass(
     longestDelay,
     `Failed to scan rewards earn pass ${pass}.`,
   ).catch((error) => {
-    logs &&
-      log(`[ACTIVITY] Earn pass ${pass} failed: ${error.message}`, "warning");
+    diagnosticLog(
+      `[ACTIVITY] Earn pass ${pass} failed: ${error.message}`,
+      "warning",
+    );
     return null;
   });
 
   const value = result?.result?.value || {};
-  const clickedItems = value.clicked || [];
+  if (!shouldContinue()) return { clicked: 0, processed: 0 };
+  let clickedItems = value.clicked || [];
   const skippedItems = value.skipped || [];
+  if (clickedItems.length === 0) {
+    diagnosticLog(
+      `[ACTIVITY] Earn scan ${pass}: ${value.reason || "no runnable cards"}.`,
+      "update",
+    );
+    return {
+      clicked: 0,
+      attempted: 0,
+      processed: 0,
+      skipped: skippedItems.length,
+      retry: Boolean(value.retry),
+      scanPosition: value.scanPosition,
+      pointDelta: null,
+    };
+  }
+  const beforeScore = await fetchRewardsSnapshot();
+  if (!shouldContinue()) return { clicked: 0, processed: 0 };
+  if (value.pressPoint) {
+    const pressed = await dispatchTrustedPress(
+      tabId,
+      value.pressPoint,
+      "KEEP EARNING",
+      shouldContinue,
+    );
+    if (!pressed) clickedItems = [];
+  }
   if (value.reason) {
-    logs && log(`[ACTIVITY] Earn pass ${pass}: ${value.reason}.`, "warning");
+    diagnosticLog(`[ACTIVITY] Earn pass ${pass}: ${value.reason}.`, "warning");
   }
   if (clickedItems.length > 0) {
-    logs &&
-      log(
-        `[ACTIVITY] Earn pass ${pass} clicked ${clickedItems.length} Keep earning items.`,
-        "success",
-      );
+    diagnosticLog(
+      `[ACTIVITY] Earn pass ${pass} clicked ${clickedItems.length} Keep earning items.`,
+      "success",
+    );
     for (const item of clickedItems) {
-      logs && log(`[ACTIVITY]   clicked ${item.type}: ${item.text}`, "update");
+      diagnosticLog(
+        `[ACTIVITY]   clicked ${item.type}: ${item.text}`,
+        "update",
+      );
     }
   }
   if (skippedItems.length > 0) {
-    logs &&
-      log(
-        `[ACTIVITY] Earn pass ${pass} skipped ${skippedItems.length} non-point, locked, or completed items.`,
-        "update",
-      );
+    diagnosticLog(
+      `[ACTIVITY] Earn pass ${pass} skipped ${skippedItems.length} non-point, locked, or completed items.`,
+      "update",
+    );
   }
 
-  await delay(4000 + Math.random() * 2500, false);
+  await delay(4000 + Math.random() * 2500, true);
+  if (!shouldContinue()) return { clicked: 0, processed: 0 };
   const processedTabs = await processOpenedActivityTabs(
     tabId,
     existingTabIds,
     earnUrl,
+    shouldContinue,
   );
+  if (!shouldContinue()) return { clicked: 0, processed: 0 };
   if (clickedItems.length > 0 || processedTabs > 0) {
     await chrome.tabs.update(tabId, { url: earnUrl, active: true });
     await wait(tabId);
-    await delay(mediumDelay, false);
+    await delay(mediumDelay, true);
   }
-  const afterScore = await fetchRewardsSnapshot(tabId);
+  if (!shouldContinue()) return { clicked: 0, processed: 0 };
+  const afterScore = await fetchRewardsSnapshot();
+  if (!shouldContinue()) return { clicked: 0, processed: 0 };
   let pointDelta = getScoreDelta(beforeScore, afterScore);
   if (afterScore && Number.isFinite(afterScore.score)) {
     memory.lastScore = afterScore.score;
@@ -2821,20 +2852,24 @@ async function runEarnActivityPass(
   // concluding a clicked earn card did not score.
   if (
     clickedItems.length > 0 &&
+    processedTabs === 0 &&
     !(Number.isFinite(pointDelta) && pointDelta > 0)
   ) {
-    await delay(4000 + Math.random() * 2000, false);
-    const retryScore = await fetchRewardsSnapshot(tabId);
+    await delay(4000 + Math.random() * 2000, true);
+    if (!shouldContinue()) return { clicked: 0, processed: 0 };
+    const retryScore = await fetchRewardsSnapshot();
+    if (!shouldContinue()) return { clicked: 0, processed: 0 };
     const retryDelta = getScoreDelta(beforeScore, retryScore);
     if (Number.isFinite(retryDelta)) pointDelta = retryDelta;
     if (retryScore && Number.isFinite(retryScore.score)) {
       memory.lastScore = retryScore.score;
     }
   }
-  // Opening a tab is not evidence of points or card completion.
-  const completedKeys = await readCompletedActivityKeys(tabId, clickedItems);
-  const confirmedClick =
-    completedKeys.length > 0 || (Number.isFinite(pointDelta) && pointDelta > 0);
+  // Only a positive delta confirms; the re-check above gives lagging points
+  // time to land without falsely confirming a tab that opened but earned 0.
+  const confirmedClick = Number.isFinite(pointDelta)
+    ? pointDelta > 0
+    : processedTabs > 0;
   let retryableMiss = false;
   if (confirmedClick) {
     confirmActivityKeys(
@@ -2850,20 +2885,18 @@ async function runEarnActivityPass(
       sessionMisses,
     );
     retryableMiss = missed.retryable;
-    logs &&
-      log(
-        `[ACTIVITY] Earn pass ${pass} click did not open/score; ${retryableMiss ? "retrying" : "moving on"}.`,
-        "warning",
-      );
+    diagnosticLog(
+      `[ACTIVITY] Earn pass ${pass} click did not open/score; ${retryableMiss ? "retrying" : "moving on"}.`,
+      "warning",
+    );
   }
   await saveActivityMemory(memory);
 
   if (pointDelta !== null) {
-    logs &&
-      log(
-        `[ACTIVITY] Earn pass ${pass} score delta: ${pointDelta >= 0 ? "+" : ""}${pointDelta}.`,
-        pointDelta > 0 ? "success" : "warning",
-      );
+    diagnosticLog(
+      `[ACTIVITY] Earn pass ${pass} score delta: ${pointDelta >= 0 ? "+" : ""}${pointDelta}.`,
+      pointDelta > 0 ? "success" : "warning",
+    );
   }
 
   log(
@@ -2871,7 +2904,7 @@ async function runEarnActivityPass(
       clickedItems.map((c) => c.text),
     )} skipped=${JSON.stringify(
       skippedItems.map((s) => (s.reason ? `${s.text} <${s.reason}>` : s.text)),
-    )} reason=${value.reason || "-"} delta=${pointDelta} processedTabs=${processedTabs} completedCards=${completedKeys.length} confirmed=${confirmedClick}`,
+    )} reason=${value.reason || "-"} delta=${pointDelta} processedTabs=${processedTabs} confirmed=${confirmedClick}`,
     "update",
   );
 
@@ -2882,13 +2915,18 @@ async function runEarnActivityPass(
     skipped: skippedItems.length,
     retry: Boolean(value.retry) || retryableMiss,
     pointDelta,
+    scanPosition: value.scanPosition,
   };
 }
 
 // Silent "Ready to claim" collector: clicks the pending-points card on the
 // dashboard and confirms it actually collected via the Rewards score delta.
-async function runClaimReadyPass(tabId, pass) {
-  const beforeScore = await fetchRewardsSnapshot(tabId);
+async function runClaimReadyPass(
+  tabId,
+  pass,
+  shouldContinue = isRuntimeActive,
+) {
+  if (!shouldContinue()) return { clicked: false };
   const claimScript = createClaimReadyScript(true);
   const result = await race(
     chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
@@ -2898,25 +2936,41 @@ async function runClaimReadyPass(tabId, pass) {
     longestDelay,
     `Failed to run ready-to-claim pass ${pass}.`,
   ).catch((error) => {
-    logs &&
-      log(`[ACTIVITY] Claim pass ${pass} failed: ${error.message}`, "warning");
+    diagnosticLog(
+      `[ACTIVITY] Claim pass ${pass} failed: ${error.message}`,
+      "warning",
+    );
     return null;
   });
 
   const value = result?.result?.value || {};
+  if (!shouldContinue()) return { clicked: false };
   let clicked = Boolean(value.clicked);
+  if (!clicked)
+    return {
+      clicked: false,
+      retry: Boolean(value.retry),
+      count: value.count,
+      pointDelta: null,
+    };
+  const beforeScore = await fetchRewardsSnapshot();
+  if (!shouldContinue()) return { clicked: false };
   if (clicked && value.pressPoint) {
-    clicked = await dispatchTrustedPress(tabId, value.pressPoint, "CLAIM");
+    clicked = await dispatchTrustedPress(
+      tabId,
+      value.pressPoint,
+      "CLAIM",
+      shouldContinue,
+    );
   }
   if (value.reason) {
-    logs && log(`[ACTIVITY] Claim pass ${pass}: ${value.reason}.`, "update");
+    diagnosticLog(`[ACTIVITY] Claim pass ${pass}: ${value.reason}.`, "update");
   }
   if (clicked) {
-    logs &&
-      log(
-        `[ACTIVITY] Claim pass ${pass} clicked "${value.text || "claim"}" (pending: ${value.count}).`,
-        "update",
-      );
+    diagnosticLog(
+      `[ACTIVITY] Claim pass ${pass} clicked "${value.text || "claim"}" (pending: ${value.count}).`,
+      "update",
+    );
   }
 
   let pointDelta = null;
@@ -2925,23 +2979,24 @@ async function runClaimReadyPass(tabId, pass) {
     // click the dialog confirm. After the confirm, poll longer for API lag.
     const checks = value.stage === "confirm" ? 4 : 1;
     for (let check = 0; check < checks; check++) {
+      if (!shouldContinue()) break;
       await delay(
         value.stage === "confirm"
           ? 2500 + Math.random() * 1200
           : 1200 + Math.random() * 600,
-        false,
+        true,
       );
-      const afterScore = await fetchRewardsSnapshot(tabId);
+      if (!shouldContinue()) break;
+      const afterScore = await fetchRewardsSnapshot();
       pointDelta = getScoreDelta(beforeScore, afterScore);
       if (Number.isFinite(pointDelta) && pointDelta > 0) break;
     }
   }
   if (Number.isFinite(pointDelta) && pointDelta !== 0) {
-    logs &&
-      log(
-        `[ACTIVITY] Claim pass ${pass} score delta: ${pointDelta > 0 ? "+" : ""}${pointDelta}.`,
-        pointDelta > 0 ? "success" : "update",
-      );
+    diagnosticLog(
+      `[ACTIVITY] Claim pass ${pass} score delta: ${pointDelta > 0 ? "+" : ""}${pointDelta}.`,
+      pointDelta > 0 ? "success" : "update",
+    );
   }
 
   log(
@@ -2961,23 +3016,33 @@ async function activity(tabId, interruptible = true, options = {}) {
   // Manual "activities only" runs pass recordRun:false so they don't consume the
   // automated daily activity quota (which would otherwise block scheduled runs).
   const recordRun = options.recordRun !== false;
+  const expectedSessionId =
+    options.expectedSessionId || config?.runtime?.currentSession?.id;
+  const ownsActivity = () => isSessionStillActive(expectedSessionId);
+  const shouldContinueActivity = () => ownsActivity() && isRuntimeActive();
+  if (!shouldContinueActivity()) return false;
   if (interruptible && !config?.runtime?.running && !config?.runtime?.act) {
-    logs && log(`[ACTIVITY] Interrupted, skipping activity.`, "warning");
+    diagnosticLog(`[ACTIVITY] Interrupted, skipping activity.`, "warning");
     return false;
   }
   if (!navigator.onLine) {
-    logs && log(`[ACTIVITY] No internet connection, skipping.`, "warning");
+    diagnosticLog(`[ACTIVITY] No internet connection, skipping.`, "warning");
     return false;
   }
   tabId = Number(tabId);
   if (!tabId) {
-    logs && log(`[ACTIVITY] No tab ID, skipping.`, "warning");
+    diagnosticLog(`[ACTIVITY] No tab ID, skipping.`, "warning");
     return false;
   }
 
+  diagnosticLog(
+    `[ACTIVITY] Starting for session ${expectedSessionId}, tab ${tabId}.`,
+  );
   config.runtime.act = 1;
+  config.runtime.rsaTab = tabId;
+  config.runtime.currentPhase = "activities";
+  config.runtime.lastRunMessage = "Running Rewards activities.";
   await set(config);
-  const shouldContinueActivity = () => isRuntimeActive();
   const activityStartTabs = new Set(
     (await chrome.tabs.query({})).map((tab) => tab.id),
   );
@@ -2988,7 +3053,9 @@ async function activity(tabId, interruptible = true, options = {}) {
   let sessionFailed = false;
   let activityStopped = false;
   let result = false;
+  let activityErrorMessage = "";
   try {
+    if (!shouldContinueActivity()) return false;
     await chrome.action.setBadgeText({ text: "ACT" });
     await chrome.action.setBadgeBackgroundColor({ color: "#0072FF" });
 
@@ -2998,14 +3065,15 @@ async function activity(tabId, interruptible = true, options = {}) {
     });
     await wait(tabId);
     await delay(mediumDelay, interruptible);
+    if (!shouldContinueActivity()) return false;
 
     let rewardsSessionOk = await isRewardsSessionActive(tabId);
+    if (!shouldContinueActivity()) return false;
     if (!rewardsSessionOk) {
-      logs &&
-        log(
-          `[ACTIVITY] Rewards session not detected; reloading dashboard once...`,
-          "warning",
-        );
+      diagnosticLog(
+        `[ACTIVITY] Rewards session not detected; reloading dashboard once...`,
+        "warning",
+      );
       await chrome.tabs.update(tabId, {
         url: rewards + "dashboard",
         active: true,
@@ -3013,46 +3081,50 @@ async function activity(tabId, interruptible = true, options = {}) {
       await wait(tabId);
       await delay(mediumDelay, interruptible);
       rewardsSessionOk = await isRewardsSessionActive(tabId);
+      if (!shouldContinueActivity()) return false;
     }
+    diagnosticLog(
+      `[ACTIVITY] Microsoft session: ${rewardsSessionOk ? "active" : "unavailable"}.`,
+    );
     if (!rewardsSessionOk) {
       sessionFailed = true;
-      logs &&
-        log(
-          `[ACTIVITY] Rewards login unavailable; cannot run Daily set or Keep earning.`,
-          "error",
-        );
+      diagnosticLog(
+        `[ACTIVITY] Rewards login unavailable; cannot run Daily set or Keep earning.`,
+        "error",
+      );
     }
 
     if (!sessionFailed) {
       debuggerReady = await attach(tabId, interruptible);
+      if (!shouldContinueActivity()) return false;
       if (!debuggerReady) {
-        logs &&
-          log(
-            `[ACTIVITY] First debugger attach failed; retrying once...`,
-            "warning",
-          );
+        diagnosticLog(
+          `[ACTIVITY] First debugger attach failed; retrying once...`,
+          "warning",
+        );
         await delay(mediumDelay, interruptible);
         debuggerReady = await attach(tabId, interruptible);
+        if (!shouldContinueActivity()) return false;
       }
       if (!debuggerReady) {
-        logs &&
-          log(
-            `[ACTIVITY] Debugger attach failed after retry; cannot scan activity cards.`,
-            "error",
-          );
+        diagnosticLog(
+          `[ACTIVITY] Debugger attach failed after retry; cannot scan activity cards.`,
+          "error",
+        );
       } else {
         await enableDomains(tabId);
       }
 
       await sendTabMessage(tabId, { action: "closePopups" }, "ACTIVITY");
       await delay(shortestDelay, interruptible);
+      if (!shouldContinueActivity()) return false;
 
       activityMemory = await loadActivityMemory();
       const sessionVisited = new Set();
       let totalClicked = 0;
       let totalProcessed = 0;
       let measuredDelta = 0;
-      let idlePasses = 0;
+      let scanTracker = createActivityScanTracker();
       const sessionMisses = new Map();
 
       if (debuggerReady) {
@@ -3067,6 +3139,7 @@ async function activity(tabId, interruptible = true, options = {}) {
             sessionVisited,
             sessionMisses,
             pass,
+            shouldContinueActivity,
           );
           totalClicked += passResult.clicked;
           totalProcessed += passResult.processed;
@@ -3083,26 +3156,36 @@ async function activity(tabId, interruptible = true, options = {}) {
           }
           clicked = totalClicked > 0 || totalProcessed > 0;
 
-          if (passResult.retry) {
-            idlePasses = 0;
-          } else if (passResult.clicked === 0 && passResult.processed === 0) {
-            idlePasses++;
-          } else {
-            idlePasses = 0;
+          const decision = scanTracker.observe(passResult);
+          if (decision.stop) {
+            diagnosticLog(
+              `[ACTIVITY] Daily set finished scanning: ${decision.reason}.`,
+              "update",
+            );
+            break;
           }
-          if (idlePasses >= 3) break;
+          if (
+            !passResult.attempted &&
+            !passResult.clicked &&
+            !passResult.processed
+          )
+            await delay(500, interruptible);
         }
       } else {
-        logs &&
-          log(`[ACTIVITY] Skipping dashboard and earn passes.`, "warning");
+        diagnosticLog(
+          `[ACTIVITY] Skipping dashboard and earn passes.`,
+          "warning",
+        );
       }
 
       if (debuggerReady && shouldContinueActivity()) {
         if (totalClicked === 0 && totalProcessed === 0) {
-          logs &&
-            log(`[ACTIVITY] Daily set idle, moving to Keep earning.`, "update");
+          diagnosticLog(
+            `[ACTIVITY] Daily set idle, moving to Keep earning.`,
+            "update",
+          );
         }
-        logs && log(`[ACTIVITY] Opening Keep earning page.`, "update");
+        diagnosticLog(`[ACTIVITY] Opening Keep earning page.`, "update");
         await chrome.tabs.update(tabId, {
           url: rewards + "earn",
           active: true,
@@ -3110,7 +3193,7 @@ async function activity(tabId, interruptible = true, options = {}) {
         await wait(tabId);
         await delay(mediumDelay, interruptible);
         await sendTabMessage(tabId, { action: "closePopups" }, "ACTIVITY");
-        idlePasses = 0;
+        scanTracker = createActivityScanTracker();
 
         for (let pass = 1; pass <= 45; pass++) {
           if (!shouldContinueActivity()) {
@@ -3123,6 +3206,7 @@ async function activity(tabId, interruptible = true, options = {}) {
             sessionVisited,
             sessionMisses,
             pass,
+            shouldContinueActivity,
           );
           totalClicked += passResult.clicked;
           totalProcessed += passResult.processed;
@@ -3139,27 +3223,31 @@ async function activity(tabId, interruptible = true, options = {}) {
           }
           clicked = totalClicked > 0 || totalProcessed > 0;
 
-          if (passResult.retry) {
-            idlePasses = 0;
-          } else if (passResult.clicked === 0 && passResult.processed === 0) {
-            idlePasses++;
-          } else {
-            idlePasses = 0;
+          const decision = scanTracker.observe(passResult);
+          if (decision.stop) {
+            diagnosticLog(
+              `[ACTIVITY] Keep earning finished scanning: ${decision.reason}.`,
+              "update",
+            );
+            break;
           }
-          if (idlePasses >= 3) break;
+          if (
+            !passResult.attempted &&
+            !passResult.clicked &&
+            !passResult.processed
+          )
+            await delay(500, interruptible);
         }
       } else if (!debuggerReady) {
-        logs &&
-          log(
-            `[ACTIVITY] Keep earning skipped because debugger attach failed.`,
-            "warning",
-          );
+        diagnosticLog(
+          `[ACTIVITY] Keep earning skipped because debugger attach failed.`,
+          "warning",
+        );
       } else if (activityStopped) {
-        logs &&
-          log(
-            `[ACTIVITY] Keep earning skipped because activity was stopped.`,
-            "warning",
-          );
+        diagnosticLog(
+          `[ACTIVITY] Keep earning skipped because activity was stopped.`,
+          "warning",
+        );
       }
 
       // Silent final step: collect any "Ready to claim" pending points that
@@ -3167,8 +3255,10 @@ async function activity(tabId, interruptible = true, options = {}) {
       // never break the run, so it is fully guarded.
       if (debuggerReady && shouldContinueActivity()) {
         try {
-          logs &&
-            log(`[ACTIVITY] Checking for ready-to-claim points.`, "update");
+          diagnosticLog(
+            `[ACTIVITY] Checking for ready-to-claim points.`,
+            "update",
+          );
           // The "Ready to claim" pending-points widget lives on the Rewards
           // HOMEPAGE (rewards.bing.com/), not /dashboard — the new React UI
           // shows the card there and opens a "Claim points" flyout. Claiming on
@@ -3183,11 +3273,10 @@ async function activity(tabId, interruptible = true, options = {}) {
           // first and reload once if it isn't detected yet (e.g. cookies were
           // still settling after the mobile phase).
           if (!(await isRewardsSessionActive(tabId))) {
-            logs &&
-              log(
-                `[ACTIVITY] Rewards session not detected before claim; reloading page.`,
-                "warning",
-              );
+            diagnosticLog(
+              `[ACTIVITY] Rewards session not detected before claim; reloading page.`,
+              "warning",
+            );
             await chrome.tabs.reload(tabId);
             await wait(tabId);
             await delay(mediumDelay, interruptible);
@@ -3195,7 +3284,11 @@ async function activity(tabId, interruptible = true, options = {}) {
           await sendTabMessage(tabId, { action: "closePopups" }, "ACTIVITY");
           for (let pass = 1; pass <= 6; pass++) {
             if (!shouldContinueActivity()) break;
-            const claimResult = await runClaimReadyPass(tabId, pass);
+            const claimResult = await runClaimReadyPass(
+              tabId,
+              pass,
+              shouldContinueActivity,
+            );
             if (
               Number.isFinite(claimResult.pointDelta) &&
               claimResult.pointDelta > 0
@@ -3212,55 +3305,70 @@ async function activity(tabId, interruptible = true, options = {}) {
             if (!claimResult.clicked || claimResult.count === 0) break;
           }
         } catch (claimError) {
-          logs &&
-            log(
-              `[ACTIVITY] Ready-to-claim step error: ${claimError.message}`,
-              "warning",
-            );
+          diagnosticLog(
+            `[ACTIVITY] Ready-to-claim step error: ${claimError.message}`,
+            "warning",
+          );
         }
       }
 
-      logs &&
-        log(
-          `[ACTIVITY] Engine finished. Activity clicks: ${totalClicked}, processed tabs: ${totalProcessed}, measured delta: ${measuredDelta}.`,
-          clicked ? "success" : "warning",
-        );
+      diagnosticLog(
+        `[ACTIVITY] Engine finished. Activity clicks: ${totalClicked}, processed tabs: ${totalProcessed}, measured delta: ${measuredDelta}.`,
+        clicked ? "success" : "warning",
+      );
       result = Boolean(clicked || meaningfulActivityRun);
     }
   } catch (error) {
-    logs && log(`[ACTIVITY] Error: ${error.message}`, "error");
+    activityErrorMessage = error.message;
+    diagnosticLog(`[ACTIVITY] Error: ${error.message}`, "error");
   } finally {
     if (sessionFailed) {
-      logs &&
-        log(
-          `[ACTIVITY] Activity aborted because Rewards login was unavailable.`,
-          "warning",
-        );
+      diagnosticLog(
+        `[ACTIVITY] Activity aborted because Rewards login was unavailable.`,
+        "warning",
+      );
     } else if (!clicked && !meaningfulActivityRun) {
-      logs && log(`[ACTIVITY] No activities to click.`, "warning");
+      diagnosticLog(`[ACTIVITY] No activities to click.`, "warning");
     }
-    if (meaningfulActivityRun && activityMemory && recordRun) {
+    if (
+      ownsActivity() &&
+      meaningfulActivityRun &&
+      activityMemory &&
+      recordRun
+    ) {
       await recordActivityRun(activityMemory);
     } else if (meaningfulActivityRun && activityMemory && !recordRun) {
-      logs &&
-        log(
-          `[ACTIVITY] Manual run — not counted toward the daily activity quota.`,
-          "update",
-        );
+      diagnosticLog(
+        `[ACTIVITY] Manual run — not counted toward the daily activity quota.`,
+        "update",
+      );
     } else if (!sessionFailed) {
-      logs &&
-        log(
-          `[ACTIVITY] Run not counted because no activity cards were processed.`,
-          "warning",
-        );
+      diagnosticLog(
+        `[ACTIVITY] Run not counted because no activity cards were processed.`,
+        "warning",
+      );
     }
-    config.runtime.act = 0;
-    await chrome.action.setBadgeText({ text: "" });
     if (debuggerReady) {
       await detach(tabId, false);
     }
     await closeOpenedActivityTabs(tabId, activityStartTabs);
-    await set(config);
+    // A stopped activity may finish an awaited operation after a new run has
+    // started. Cleanup of its own tabs is safe; changing the new runtime is not.
+    if (ownsActivity()) {
+      config.runtime.act = 0;
+      if (Number(config.runtime.rsaTab) === tabId) config.runtime.rsaTab = null;
+      config.runtime.lastRunMessage = activityErrorMessage
+        ? `Activities failed: ${activityErrorMessage}`
+        : sessionFailed
+          ? "Activities could not start: sign in to Microsoft on Bing/Rewards."
+          : !debuggerReady
+            ? "Activities could not start: debugger attach failed. Close DevTools on the Rewards tab and retry."
+            : result
+              ? "Rewards activities completed."
+              : "No activity completion was confirmed. Check Daily set and the activity log.";
+      await chrome.action.setBadgeText({ text: "" });
+      await set(config);
+    }
   }
   return result;
 }
@@ -3286,8 +3394,13 @@ async function initialise(searches, expectedSessionId = null) {
   let tabId = null;
   let runSucceeded = false;
   let scheduleSucceeded = false;
+  let failureMessage = "";
   try {
     if (!navigator.onLine) {
+      failureMessage =
+        "Cannot start: Chrome is offline. Check your internet connection and try again.";
+      config.runtime.lastRunMessage = failureMessage;
+      await set(config);
       logs &&
         log(
           "[INITIALISE] No internet connection, skipping initialisation.",
@@ -3320,7 +3433,7 @@ async function initialise(searches, expectedSessionId = null) {
         true,
         {
           isSessionStillActive,
-          log: (msg, level) => logs && log(msg, level),
+          log: diagnosticLog,
           attachFn: attach,
           detachFn: detach,
           clearFn: clear,
@@ -3330,7 +3443,8 @@ async function initialise(searches, expectedSessionId = null) {
           createTabFn: (opts) => chrome.tabs.create(opts),
           removeTabFn: (id) => chrome.tabs.remove(id),
           updateTabFn: (id, opts) => chrome.tabs.update(id, opts),
-          activityFn: activity,
+          activityFn: (activityTabId, interruptible) =>
+            activity(activityTabId, interruptible, { expectedSessionId }),
           shortestDelay,
           mediumDelay,
           rewards,
@@ -3373,6 +3487,7 @@ async function initialise(searches, expectedSessionId = null) {
     await chrome.action.setBadgeBackgroundColor({ color: "#0072FF" });
 
     config.runtime.currentPhase = "search";
+    config.runtime.lastRunMessage = "Searches are running.";
     await set(config);
 
     const searchPhasesSuccessful = await runSearchPhases(
@@ -3381,7 +3496,7 @@ async function initialise(searches, expectedSessionId = null) {
       tabId,
       {
         isSessionStillActive,
-        log: (msg, level) => logs && log(msg, level),
+        log: diagnosticLog,
         searchFn: search,
         simulateFn: simulate,
         clearFn: clear,
@@ -3403,7 +3518,7 @@ async function initialise(searches, expectedSessionId = null) {
       searchPhasesSuccessful,
       {
         isSessionStillActive,
-        log: (msg, level) => logs && log(msg, level),
+        log: diagnosticLog,
         attachFn: attach,
         detachFn: detach,
         clearFn: clear,
@@ -3413,7 +3528,8 @@ async function initialise(searches, expectedSessionId = null) {
         createTabFn: (opts) => chrome.tabs.create(opts),
         removeTabFn: (id) => chrome.tabs.remove(id),
         updateTabFn: (id, opts) => chrome.tabs.update(id, opts),
-        activityFn: activity,
+        activityFn: (activityTabId, interruptible) =>
+          activity(activityTabId, interruptible, { expectedSessionId }),
         shortestDelay,
         mediumDelay,
         rewards,
@@ -3431,34 +3547,45 @@ async function initialise(searches, expectedSessionId = null) {
       postSearchResult?.searchSuccessful ?? postSearchResult?.runSuccessful,
     );
   } catch (err) {
-    logs && log(`[INITIALISE] - Unexpected error: ${err.message}`, "error");
+    failureMessage = `Run failed: ${err.message}`;
+    config.runtime.lastRunMessage = failureMessage;
+    await set(config);
+    diagnosticLog(`[INITIALISE] - Unexpected error: ${err.message}`, "error");
     recordCrash("initialise", err, {
       expectedSessionId,
       phase: config?.runtime?.currentPhase,
     });
   } finally {
-    try {
-      await cleanupAfterRun(tabId, expectedSessionId, {
-        removeTabFn: (id) => chrome.tabs.remove(id),
-        stopCurrentSession:
-          RunCoordinator.stopCurrentSession.bind(RunCoordinator),
-        setConfig: set,
-        createAlarm: (name, opts) => chrome.alarms.create(name, opts),
-        log: (msg, level) => logs && log(msg, level),
-        getConfig: () => config,
-        isActiveSession: RunCoordinator.isActiveSession.bind(RunCoordinator),
-        clearBadgeFn: () => chrome.action.setBadgeText({ text: "" }),
-        runSucceeded: scheduleSucceeded,
-        endedSessionType,
-        getScheduleAlarmDelayMs,
-        isScheduledModeActive: () => isScheduledModeActive(),
-      });
-      await flushDiagnosticLog(
-        endedSessionType === "schedule" ? "schedule" : "run",
-      );
-    } finally {
-      await rewardsReader.release();
+    needPatch = false;
+    diagnosticLog(
+      `[RUN] Finished session ${expectedSessionId}: searches=${scheduleSucceeded}, activities/run=${runSucceeded}, phase=${config.runtime.currentPhase}, submitted=${config.runtime.done}, failed=${config.runtime.failed}${failureMessage ? `, error=${failureMessage}` : ""}.`,
+      runSucceeded ? "success" : "warning",
+    );
+    if (!failureMessage && isSessionStillActive(expectedSessionId)) {
+      config.runtime.lastRunMessage = runSucceeded
+        ? ""
+        : scheduleSucceeded
+          ? "Searches completed. Rewards activities did not complete; check Microsoft login."
+          : "Run finished without confirming all requested searches. Check Bing and retry.";
     }
+    await cleanupAfterRun(tabId, expectedSessionId, {
+      removeTabFn: (id) => chrome.tabs.remove(id),
+      stopCurrentSession:
+        RunCoordinator.stopCurrentSession.bind(RunCoordinator),
+      setConfig: set,
+      createAlarm: (name, opts) => chrome.alarms.create(name, opts),
+      log: diagnosticLog,
+      getConfig: () => config,
+      isActiveSession: RunCoordinator.isActiveSession.bind(RunCoordinator),
+      clearBadgeFn: () => chrome.action.setBadgeText({ text: "" }),
+      runSucceeded: scheduleSucceeded,
+      endedSessionType,
+      getScheduleAlarmDelayMs,
+      isScheduledModeActive: () => isScheduledModeActive(),
+    });
+    await flushDiagnosticLog(
+      endedSessionType === "schedule" ? "schedule" : "run",
+    );
   }
 
   return runSucceeded;
@@ -3466,13 +3593,10 @@ async function initialise(searches, expectedSessionId = null) {
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   try {
-    await configReady;
     const stored = await get();
     await applyStoredConfig(stored, "alarm");
     logs && log(`[ALARM] - Alarm triggered.`, "update");
-    if (alarm.name === STARTUP_RETRY_ALARM) {
-      await startupRetry.retry();
-    } else if (alarm.name === "schedule") {
+    if (alarm.name === "schedule") {
       await tryStartScheduledRun("ALARM");
     } else if (alarm.name === "clear" || alarm.name === "clear_afternoon") {
       logs && log(`[ALARM] - ${alarm.name} alarm triggered.`, "update");
@@ -3500,8 +3624,6 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       "error",
     );
     recordCrash(`alarm:${alarm?.name || "unknown"}`, error);
-  } finally {
-    if (!config?.runtime?.running) await rewardsReader.release();
   }
 });
 
@@ -3520,15 +3642,13 @@ chrome.runtime.onStartup.addListener(() => {
 
 chrome.runtime.onStartup.addListener(async () => {
   try {
-    await configReady;
     const stored = await get();
     await applyStoredConfig(stored, "startup");
     log(`[STARTUP] - Extension started.`, "success");
     const isAtStartupMode = config?.schedule?.mode === "m2";
     if (isScheduledModeActive() || isAtStartupMode) {
       await delay(longestDelay, false);
-      if (isAtStartupMode) await startupRetry.start();
-      else await tryStartScheduledRun("STARTUP_PERIODIC");
+      await tryStartScheduledRun("STARTUP");
     }
     const clearTime = new Date();
     clearTime.setHours(6, 0, 0, 0);
@@ -3590,18 +3710,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         config.search = normalizeSearchPlan(message?.searches || config.search);
-        await startupRetry.cancel();
-        if (!(await refreshSearchCountersFromRewards())) {
-          await rewardsReader.release();
-          reply({ success: false, message: config.runtime.lastRunMessage });
-          return;
-        }
+        await refreshSearchCountersFromRewards();
 
         const limitedSearchPlan = limitSearchPlanForToday(config.search, {
           silent: true,
         });
         if (!hasSearchWork(limitedSearchPlan) && !hasActivityWork()) {
-          await rewardsReader.release();
           log("No searches or activities remaining for today.", "error");
           reply({
             success: false,
@@ -3616,6 +3730,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
+        config.runtime.lastRunMessage = "Starting searches.";
         await set(config);
 
         const startLabel = hasSearchWork(limitedSearchPlan)
@@ -3629,60 +3744,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       case ACTIONS.SCHEDULE: {
-        config.schedule = normalizeSearchPlan(
-          message?.searches || config.schedule,
-        );
-        await set(config);
-
-        if (["m3", "m4"].includes(config?.schedule?.mode)) {
-          if (config?.schedule?.desk === 0 && config?.schedule?.mob === 0) {
-            await chrome.alarms.clear("schedule");
-            log("No searches to schedule.", "error");
-            reply({ success: false, message: "No searches to schedule." });
-            return;
-          }
-          const armed = await armScheduleAlarm(config.schedule.mode);
-          if (!armed) {
-            reply({ success: false, message: "Could not arm schedule alarm." });
-            return;
-          }
-          log(
-            `[MESSAGE] - Schedule armed for mode ${config.schedule.mode}; next run queued.`,
-            "update",
-          );
-          reply({
-            success: true,
-            message: "Schedule armed. The next run will start automatically.",
-          });
-          return;
-        }
-
-        await chrome.alarms.clear("schedule");
-        if (config?.schedule?.desk === 0 && config?.schedule?.mob === 0) {
-          log("No searches to perform.", "error");
-          reply({ success: false, message: "No searches to perform." });
-          return;
-        }
-
-        await startupRetry.cancel();
-        if (!(await refreshSearchCountersFromRewards())) {
-          await rewardsReader.release();
-          reply({ success: false, message: config.runtime.lastRunMessage });
-          return;
-        }
-        const limitedSchedulePlan = limitSearchPlanForToday(config.schedule, {
-          silent: true,
-        });
-        if (!hasSearchWork(limitedSchedulePlan) && !hasActivityWork()) {
-          await rewardsReader.release();
-          log("No searches or activities remaining for today.", "error");
-          reply({
-            success: false,
-            message: "No searches or activities remaining for today.",
-          });
-          return;
-        }
-
+        // Check before persisting a plan or arming an alarm. A rejected command
+        // must leave the schedule and the active run unchanged.
         const scheduleCheck = RunCoordinator.canStartNewRun();
         if (!scheduleCheck.allowed) {
           log(
@@ -3691,6 +3754,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           );
           reply({ success: false, message: "A run is already in progress." });
           return;
+        }
+
+        config.schedule = normalizeSearchPlan(
+          message?.searches || config.schedule,
+        );
+        if (config?.schedule?.mode) {
+          const m = config.schedule.mode.match(/m[1-4]/);
+          if (m) config.schedule.mode = m[0];
+        }
+        await set(config);
+
+        if (config?.schedule?.desk === 0 && config?.schedule?.mob === 0) {
+          await chrome.alarms.clear("schedule");
+          log("No searches to schedule.", "error");
+          reply({ success: false, message: "No searches to schedule." });
+          return;
+        }
+
+        if (["m3", "m4"].includes(config?.schedule?.mode)) {
+          await armScheduleAlarm(config.schedule.mode);
+          logs &&
+            log(
+              `[MESSAGE] - Schedule armed for mode ${config.schedule.mode}; starting searches now.`,
+              "update",
+            );
+        } else {
+          await chrome.alarms.clear("schedule");
         }
 
         const scheduleSession = RunCoordinator.startNewSession("schedule");
@@ -3702,11 +3792,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
+        config.runtime.lastRunMessage = "Starting scheduled searches.";
         await set(config);
 
-        const scheduleLabel = hasSearchWork(limitedSchedulePlan)
-          ? `${limitedSchedulePlan.desk} desktop and ${limitedSchedulePlan.mob} mobile`
-          : "activities only";
+        const scheduleLabel = `${config.schedule.desk} desktop and ${config.schedule.mob} mobile`;
         log(
           `Starting scheduled searches: ${scheduleLabel}. (session: ${scheduleSession.id})`,
         );
@@ -3756,6 +3845,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           reply({ success: false, message: "A run is already in progress." });
           return;
         }
+        if (!navigator.onLine) {
+          config.runtime.lastRunMessage =
+            "Activities could not start: Chrome is offline. Check your internet connection.";
+          await set(config);
+          reply({ success: false, message: config.runtime.lastRunMessage });
+          return;
+        }
 
         const activitySession = RunCoordinator.startNewSession("activity");
         if (!activitySession) {
@@ -3766,6 +3862,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
+        config.runtime.lastRunMessage = "Starting Rewards activities.";
         await set(config);
         reply({
           success: true,
@@ -3778,8 +3875,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             url: rewards + "dashboard",
             active: true,
           });
+          if (!RunCoordinator.isActiveSession(activitySession.id)) return;
+          config.runtime.rsaTab = activityTab.id;
+          await set(config);
           await wait(activityTab.id);
-          await activity(activityTab.id, true, { recordRun: false });
+          await activity(activityTab.id, true, {
+            recordRun: false,
+            expectedSessionId: activitySession.id,
+          });
+        } catch (error) {
+          if (RunCoordinator.isActiveSession(activitySession.id)) {
+            config.runtime.lastRunMessage = `Activities failed: ${error.message}`;
+            await set(config);
+          }
+          throw error;
         } finally {
           if (activityTab?.id) {
             try {
@@ -3794,11 +3903,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
           if (RunCoordinator.isActiveSession(activitySession.id)) {
             await RunCoordinator.stopCurrentSession("activity_finish");
-          } else {
-            await set(config);
           }
           await flushDiagnosticLog("activity");
-          await rewardsReader.release();
         }
         break;
       }

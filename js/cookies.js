@@ -48,6 +48,7 @@ export function createCookieHelpers({
         continue;
       }
       for (const cookie of list) {
+        if (!AUTH_COOKIE_PATTERNS.test(cookie.name) && cookie.name !== "_U" && cookie.name !== "Kiev") continue;
         const key = `${cookie.storeId || ""}|${cookie.domain}|${cookie.path}|${cookie.name}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -177,3 +178,4 @@ export function createCookieHelpers({
     restoreAuthCookiesDetailed,
   };
 }
+

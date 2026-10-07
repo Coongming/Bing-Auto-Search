@@ -12,7 +12,7 @@ function clearLogBuffer() {
   _logBuffer.length = 0;
 }
 
-function log(message, type = "default") {
+function log(message, type = "default", options = {}) {
   const colorMap = {
     default: "#555555",
     success: "#48d17e",
@@ -34,6 +34,7 @@ function log(message, type = "default") {
   if (_logBuffer.length > LOG_BUFFER_MAX) {
     _logBuffer.splice(0, _logBuffer.length - LOG_BUFFER_MAX);
   }
+  if (options.console === false) return;
   console.log(
     `%c[${time}] - [${type.toUpperCase()}] - ${message}`,
     `color: ${color}; font-weight: bold;`,
@@ -255,14 +256,14 @@ function applyConfigDefaults(target, stored) {
   delete target.control.consent;
   delete target.pro;
   if (!storedPatchDefaultApplied) {
-    target.control.clear = 0;
+    target.control.clear = 1;
     target.control.enhancedPatchDefaultApplied = 1;
     target.control.preserveRewards = 1;
   } else if (
     target.control.clear === undefined ||
     target.control.clear === null
   ) {
-    target.control.clear = 0;
+    target.control.clear = 1;
   }
   if (
     target.control.preserveRewards === undefined ||
@@ -320,7 +321,6 @@ async function resetRuntime(config) {
     config.runtime.done = 0;
     config.runtime.total = 0;
     config.runtime.failed = 0;
-    config.runtime.lastRunMessage = "";
     config.runtime.mobile = 0;
     config.runtime.act = 0;
 

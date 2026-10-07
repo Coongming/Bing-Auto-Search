@@ -7,14 +7,14 @@ export function createDefaultConfig() {
     search: {
       desk: 31,
       mob: 21,
-      min: 10,
-      max: 20,
+      min: 7,
+      max: 14,
     },
     schedule: {
       desk: 31,
       mob: 21,
-      min: 10,
-      max: 20,
+      min: 7,
+      max: 14,
       mode: "m1",
     },
     device: {
@@ -26,7 +26,7 @@ export function createDefaultConfig() {
     },
     control: {
       niche: "random",
-      clear: 0,
+      clear: 1,
       enhancedPatchDefaultApplied: 1,
       humanPacingDefaultApplied: 1,
       preserveRewards: 1,
@@ -44,7 +44,6 @@ export function createDefaultConfig() {
       pcSearch: 0,
       mobileSearch: 0,
       searchCounterDate: "",
-      lastRunMessage: "",
       currentSession: null,
       currentPhase: null,
     },

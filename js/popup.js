@@ -37,6 +37,13 @@ function sendMessageWithTimeout(message, timeoutMs = MESSAGE_TIMEOUT_MS) {
 let config = createDefaultConfig();
 let _uiUpdateTimer = null;
 let _uiLocked = false;
+let commandStatus = "";
+let lastWorkerStatus = "";
+
+function showRunStatus(message) {
+  commandStatus = message || "";
+  $(".runStatus").text(commandStatus).prop("hidden", !commandStatus);
+}
 
 // ── Tunables (were magic numbers scattered through the file) ──
 const UI_UPDATE_DEBOUNCE_MS = 80;
@@ -62,12 +69,12 @@ function scheduleUIUpdate() {
 const limitsMap = {
   searchDesk: { min: 0, max: [100, 300] },
   searchMob: { min: 0, max: [100, 300] },
-  searchMin: { min: 10, max: [60, 600] },
-  searchMax: { min: 20, max: [90, 900] },
+  searchMin: { min: 7, max: [60, 600] },
+  searchMax: { min: 14, max: [90, 900] },
   scheduleDesk: { min: 0, max: [100, 300] },
   scheduleMob: { min: 0, max: [100, 300] },
-  scheduleMin: { min: 10, max: [60, 600] },
-  scheduleMax: { min: 20, max: [90, 900] },
+  scheduleMin: { min: 7, max: [60, 600] },
+  scheduleMax: { min: 14, max: [90, 900] },
 };
 const $nav = $(".nav");
 const $section = $("section");
@@ -102,7 +109,6 @@ const $userManual = $("#userManual");
 const $deviceName = $("#deviceName");
 const $resetDevice = $("#resetDevice");
 const $clear = $("#clear");
-const $preserveRewards = $("#preserveRewards");
 const $log = $("#log");
 const $niche = $("#niche");
 const $activity = $("#activity");
@@ -196,10 +202,13 @@ async function updateUI() {
   const activeMode = config?.runtime?.mode;
   const isSearchRun = isRunning && activeMode === "search";
   const isScheduleRun = isRunning && activeMode === "schedule";
+  const isActivityRun = isRunning && activeMode === "activity";
   $searchTrigger.text(isSearchRun ? "Stop" : "Search");
   $scheduleTrigger.text(isScheduleRun ? "Stop" : "Schedule");
   $searchTrigger.prop("disabled", isRunning && !isSearchRun);
   $scheduleTrigger.prop("disabled", isRunning && !isScheduleRun);
+  $activity.text(isActivityRun ? "Stop" : "Perform");
+  $activity.prop("disabled", isRunning && !isActivityRun);
   const { total, done, failed } = config.runtime;
   const totalCount = Number(total) || 0;
   const doneCount = Number(done) || 0;
@@ -224,10 +233,16 @@ async function updateUI() {
   // device happens once at startup (see $(document).ready).
   $deviceName.text(config?.device?.name || "");
   $clear.prop("checked", config?.control?.clear);
-  $preserveRewards.prop("checked", true).prop("disabled", true);
-  $(".runStatus")
-    .text(config.runtime.lastRunMessage || "")
-    .prop("hidden", !config.runtime.lastRunMessage);
+  // Hide the completion text also when it was saved by an older worker.
+  const workerStatus =
+    config.runtime.lastRunMessage === "Run completed."
+      ? ""
+      : config.runtime.lastRunMessage || "";
+  if (workerStatus !== lastWorkerStatus) {
+    lastWorkerStatus = workerStatus;
+    commandStatus = workerStatus;
+  }
+  $(".runStatus").text(commandStatus).prop("hidden", !commandStatus);
   $log.prop("checked", config?.control?.log);
   const storedNiche = config?.control?.niche || "random";
   const validNiches = $niche
@@ -274,7 +289,7 @@ async function updateUI() {
 
   // Disable maintenance actions that would corrupt or collide with an active
   // run (start another activity/simulation, or wipe cookies mid-run).
-  $("#activity, #simulate, #clearBrowsingData").prop("disabled", isRunning);
+  $("#simulate, #clearBrowsingData").prop("disabled", isRunning);
 
   logs && log(`[UPDATE] - UI updated`, "update");
 }
@@ -284,6 +299,12 @@ async function flashStatus($btn, originalText, result) {
   // error title stuck forever on failure).
   const originalTitle = $btn.attr("title");
   $btn.removeClass("flash-success flash-failed");
+  showRunStatus(
+    result?.message ||
+      (result === true || result?.success
+        ? ""
+        : "Action failed. Please try again."),
+  );
   if (result?.success || result === true) {
     $btn.addClass("flash-success").text("Success!");
   } else {
@@ -400,58 +421,34 @@ function readLimitedNumber($el, limitKey) {
   return clampLimitedNumber($el.val(), limitKey);
 }
 async function persistSearchForm() {
-  try {
-    const min = readLimitedNumber($searchMin, "searchMin");
-    const max = Math.max(min, readLimitedNumber($searchMax, "searchMax"));
-    const search = {
-      ...(config.search || {}),
-      desk: readLimitedNumber($searchDesk, "searchDesk"),
-      mob: readLimitedNumber($searchMob, "searchMob"),
-      min,
-      max,
-    };
-    await saveConfigMutation((next) => {
-      next.search = {
-        ...next.search,
-        ...search,
-      };
-    });
-    return { ...config.search };
-  } catch (err) {
-    config?.control?.log &&
-      log(
-        `[PERSIST] Failed to persist search form: ${err?.message || err}`,
-        "error",
-      );
-    return { ...(config.search || {}) };
-  }
+  const min = readLimitedNumber($searchMin, "searchMin");
+  const max = Math.max(min, readLimitedNumber($searchMax, "searchMax"));
+  const searches = {
+    ...(config.search || {}),
+    desk: readLimitedNumber($searchDesk, "searchDesk"),
+    mob: readLimitedNumber($searchMob, "searchMob"),
+    min,
+    max,
+  };
+  await saveConfigMutation((next) => {
+    next.search = { ...next.search, ...searches };
+  });
+  return { ...config.search };
 }
 async function persistScheduleForm() {
-  try {
-    const min = readLimitedNumber($scheduleMin, "scheduleMin");
-    const max = Math.max(min, readLimitedNumber($scheduleMax, "scheduleMax"));
-    const schedule = {
-      ...(config.schedule || {}),
-      desk: readLimitedNumber($scheduleDesk, "scheduleDesk"),
-      mob: readLimitedNumber($scheduleMob, "scheduleMob"),
-      min,
-      max,
-    };
-    await saveConfigMutation((next) => {
-      next.schedule = {
-        ...next.schedule,
-        ...schedule,
-      };
-    });
-    return { ...config.schedule };
-  } catch (err) {
-    config?.control?.log &&
-      log(
-        `[PERSIST] Failed to persist schedule form: ${err?.message || err}`,
-        "error",
-      );
-    return { ...(config.schedule || {}) };
-  }
+  const min = readLimitedNumber($scheduleMin, "scheduleMin");
+  const max = Math.max(min, readLimitedNumber($scheduleMax, "scheduleMax"));
+  const searches = {
+    ...(config.schedule || {}),
+    desk: readLimitedNumber($scheduleDesk, "scheduleDesk"),
+    mob: readLimitedNumber($scheduleMob, "scheduleMob"),
+    min,
+    max,
+  };
+  await saveConfigMutation((next) => {
+    next.schedule = { ...next.schedule, ...searches };
+  });
+  return { ...config.schedule };
 }
 $(document).ready(async function () {
   $section.attr("hidden", true);
@@ -472,6 +469,17 @@ $(document).ready(async function () {
     await resetDevice();
     $deviceName.text(config?.device?.name || "");
   }
+
+  chrome.storage.sync
+    .get("user_stat_uuid")
+    .then((data) => {
+      $("#uuid").val(data?.user_stat_uuid || "");
+    })
+    .catch(() => {});
+  $("#uuid").on("click", function () {
+    this.select();
+    document.execCommand("copy");
+  });
 
   const logs = config?.control?.log;
   logs && log("[INIT] - UI initialized with scale: " + scale, "update");
@@ -576,7 +584,7 @@ $(document).ready(async function () {
   function makeRunTriggerHandler({ startAction, persistForm, logTag, label }) {
     return async function () {
       const $btn = $(this);
-      if ($btn.prop("disabled")) return;
+      if (_uiLocked || $btn.prop("disabled")) return;
 
       const originalText = $btn.text();
       $btn.prop("disabled", true);
@@ -593,11 +601,9 @@ $(document).ready(async function () {
             log(`[${logTag}] - ${label} stopped: ${originalText}`, "update");
         } else {
           $btn.text("Starting...");
-          const searches = await persistForm();
-          const response = await sendMessageWithTimeout({
-            action: startAction,
-            searches,
-          });
+          const message = { action: startAction };
+          if (persistForm) message.searches = await persistForm();
+          const response = await sendMessageWithTimeout(message);
           await flashStatus($btn, originalText, response);
           logs &&
             log(`[${logTag}] - ${label} started: ${originalText}`, "update");
@@ -608,7 +614,10 @@ $(document).ready(async function () {
             `[${logTag}] Click handler error: ${err?.message || err}`,
             "error",
           );
-        await flashStatus($btn, originalText, false);
+        await flashStatus($btn, originalText, {
+          success: false,
+          message: err?.message || String(err),
+        });
       } finally {
         _uiLocked = false;
         $btn.prop("disabled", false);
@@ -663,29 +672,14 @@ $(document).ready(async function () {
     });
     logs && log(`[CONTROL] - Niche set to: ${config.control.niche}`, "update");
   });
-  $activity.on("click", async function () {
-    const $btn = $(this);
-    if ($btn.prop("disabled")) return;
-    const $btnText = $btn.text();
-    $btn.prop("disabled", true);
-    _uiLocked = true;
-    try {
-      const response = await sendMessageWithTimeout({
-        action: ACTIONS.ACTIVITY,
-      });
-      await flashStatus($btn, $btnText, response);
-      logs &&
-        log(
-          `[ACTIVITY] - Activity started: ${response?.message ?? JSON.stringify(response)}`,
-          "update",
-        );
-    } catch (err) {
-      await flashStatus($btn, $btnText, false);
-    } finally {
-      _uiLocked = false;
-      $btn.prop("disabled", false);
-    }
-  });
+  $activity.on(
+    "click",
+    makeRunTriggerHandler({
+      startAction: ACTIONS.ACTIVITY,
+      logTag: "ACTIVITY",
+      label: "Activity",
+    }),
+  );
   $act.on("change", async function () {
     const act = $(this).is(":checked") ? 1 : 0;
     await saveConfigMutation((next) => {

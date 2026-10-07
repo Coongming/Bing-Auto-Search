@@ -2,6 +2,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { loadEsmModule } = require("./esm-loader.js");
 
 function loadQueries() {
   const raw = fs.readFileSync(
@@ -39,7 +40,12 @@ function loadPopupNicheOptions() {
 
 describe("popup Search Niche options", () => {
   test("match runtime query categories", () => {
-    const runtimeQueries = { ...loadQueries(), ...loadQueriesExtra() };
+    const { queriesV1 } = loadEsmModule("../js/queries_v1.js");
+    const runtimeQueries = {
+      ...loadQueries(),
+      ...loadQueriesExtra(),
+      ...queriesV1,
+    };
     const runtimeCategories = Object.keys(runtimeQueries).sort();
     const popupOptions = loadPopupNicheOptions().sort();
 

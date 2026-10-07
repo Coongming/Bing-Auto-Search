@@ -1,14 +1,7 @@
 * {
   box-sizing: border-box;
   border: none;
-  font-family:
-    "Outfit",
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    Roboto,
-    Arial,
-    sans-serif;
+  font-family: "Outfit", sans-serif;
   margin: 0;
   outline: none;
   padding: 0;
@@ -42,17 +35,9 @@
 .material-symbols-outlined {
   align-items: center;
   display: flex;
-  font-family: "Material Symbols Outlined", system-ui, sans-serif;
-  font-size: calc(20px * var(--scale));
-  font-style: normal;
-  font-weight: normal;
   height: calc(24px * var(--scale)) !important;
   justify-content: center;
-  letter-spacing: normal;
-  line-height: 1;
   overflow: hidden;
-  text-transform: none;
-  white-space: nowrap;
   width: calc(24px * var(--scale)) !important;
 }
 
@@ -67,14 +52,14 @@ body {
   width: calc(320px * var(--scale));
 }
 
-header {
+header,
+footer {
   align-items: center;
   display: flex;
   height: calc(48px * var(--scale));
   gap: calc(8px * var(--scale));
   justify-content: center;
   padding: 0 calc(8px * var(--scale));
-  position: relative;
 }
 
 header a {
@@ -127,13 +112,8 @@ section {
   flex-direction: column;
   gap: calc(8px * var(--scale));
   height: calc(312px * var(--scale));
-  overflow-y: auto;
+  overflow-y: scroll;
   padding: calc(8px * var(--scale));
-}
-
-/* The author-level section display rule must not override the hidden attribute. */
-section[hidden] {
-  display: none;
 }
 
 .tile {
@@ -246,9 +226,6 @@ section[hidden] {
   padding: calc(8px * var(--scale));
   text-align: center;
   width: 100%;
-  transition:
-    background-color 0.2s ease,
-    opacity 0.2s ease;
 }
 
 .mode {
@@ -357,15 +334,120 @@ section[hidden] {
   padding: calc(4px * var(--scale)) calc(16px * var(--scale));
 }
 
-.mode a.disabled {
+.noConsent,
+.noPro {
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: not-allowed;
   pointer-events: none;
-  opacity: 0.5;
+  opacity: 0.75;
 }
 
+#consentForm {
+  background: var(--bg);
+  left: 0;
+  overflow-y: scroll;
+  /* position: absolute; */
+  text-align: justify;
+  /* top: 0; */
+}
+
+#consentForm h2 {
+  color: var(--text);
+  font-size: calc(16px * var(--scale));
+  font-weight: 700;
+  margin-bottom: calc(8px * var(--scale));
+}
+
+#consentForm p {
+  color: var(--text);
+  font-size: calc(14px * var(--scale));
+  line-height: calc(20px * var(--scale));
+  margin-bottom: calc(8px * var(--scale));
+}
+
+#consentForm ul {
+  color: var(--text);
+  font-size: calc(14px * var(--scale));
+  font-weight: 300;
+  line-height: calc(20px * var(--scale));
+  margin-bottom: calc(8px * var(--scale));
+}
+
+#consentForm a {
+  color: var(--primary);
+  cursor: pointer;
+  font-size: calc(14px * var(--scale));
+  font-weight: 500;
+  text-decoration: underline;
+}
+
+footer {
+  align-items: center;
+  color: var(--text);
+  display: flex;
+  justify-content: center;
+}
+
+footer #promo {
+  align-items: center;
+  animation: blink 2s infinite;
+  display: flex;
+  font-size: calc(16px * var(--scale));
+  gap: calc(4px * var(--scale));
+  justify-content: center;
+}
+
+@keyframes blink {
+  0% {
+    color: var(--text);
+  }
+  50% {
+    color: var(--primary);
+  }
+  100% {
+    color: var(--text);
+  }
+}
+
+#rating {
+  align-items: center;
+  display: flex;
+  font-size: calc(16px * var(--scale));
+  font-weight: 500;
+  gap: calc(4px * var(--scale));
+  justify-content: center;
+}
+
+#rating:hover span {
+  color: var(--primary);
+}
+
+#rating span {
+  cursor: pointer;
+}
+
+#rating span:hover ~ span {
+  color: var(--text);
+}
+
+/* Persistent command feedback survives the temporary button flash. */
+.runStatus {
+  margin: 8px 0 0;
+  color: #555;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+[hidden] {
+  display: none !important;
+}
 .flash-success {
   background: #0072ff !important;
 }
-
 .flash-failed {
   background: #ff4d4d !important;
+}
+.disabled {
+  pointer-events: none;
+  opacity: 0.55;
 }

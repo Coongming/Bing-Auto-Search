@@ -19,6 +19,8 @@ module.exports = [
       "node_modules/**",
       "coverage/**",
       "js/jquery.js",
+      // Inactive legacy vendor bundle; it is not imported by the 6.0 worker.
+      "js/stats.js",
       "js/queries.js",
       "js/queries_extra.js",
     ],

@@ -16,27 +16,6 @@ const SELECTORS = {
 const LOGGED_IN_HREF = "account.microsoft.com";
 const SIGN_IN_HREF = "/fd/auth/signin";
 
-function extractRewardsUserStatus(data) {
-  for (const userStatus of [
-    data?.dashboard?.userStatus,
-    data?.status?.userStatus,
-  ]) {
-    if (
-      userStatus &&
-      typeof userStatus === "object" &&
-      !Array.isArray(userStatus) &&
-      userStatus.isRewardsUser !== false &&
-      userStatus.counters &&
-      typeof userStatus.counters === "object" &&
-      !Array.isArray(userStatus.counters) &&
-      Object.keys(userStatus.counters).length
-    )
-      return userStatus;
-  }
-  const code = data?.code == null ? "" : ` (API code ${data.code})`;
-  throw new Error(`Rewards returned no usable counters${code}.`);
-}
-
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   (async () => {
     try {
@@ -193,56 +172,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           break;
         }
 
-        case "readRewardsStatus": {
-          if (location.origin !== "https://rewards.bing.com") {
-            throw new Error("Account status must be read on the Rewards page.");
-          }
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 10000);
-          try {
-            const response = await fetch("/api/getuserinfo", {
-              cache: "no-store",
-              credentials: "include",
-              signal: controller.signal,
-            });
-            if (!response.ok)
-              throw new Error(`Rewards API HTTP ${response.status}`);
-            if (new URL(response.url).origin !== location.origin) {
-              throw new Error("Rewards API redirected to login.");
-            }
-            const data = await response.json();
-            const userStatus = extractRewardsUserStatus(data);
-            sendResponse({ success: true, userStatus });
-          } finally {
-            clearTimeout(timer);
-          }
-          break;
-        }
-
-        case "readRewardsDocument": {
-          if (
-            location.origin !== "https://rewards.bing.com" ||
-            location.pathname !== "/api/getuserinfo"
-          ) {
-            throw new Error("Rewards JSON must be read on its API page.");
-          }
-          const text =
-            document.querySelector("pre")?.textContent ||
-            document.body?.textContent ||
-            "";
-          let data;
-          try {
-            data = JSON.parse(text);
-          } catch {
-            throw new Error("Rewards API page did not contain valid JSON.");
-          }
-          sendResponse({
-            success: true,
-            userStatus: extractRewardsUserStatus(data),
-          });
-          break;
-        }
-
         case "checkRewardsSession": {
           const href = (location.href || "").toLowerCase();
           const text = (document.body?.innerText || "")
@@ -259,7 +188,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const onRewardsHost = /rewards\.bing\.com/.test(href);
           sendResponse({
             success: true,
-            active: onRewardsHost && !onLoginPage && hasRewardsUi,
+            active: hasRewardsUi || (onRewardsHost && !onLoginPage),
           });
           break;
         }

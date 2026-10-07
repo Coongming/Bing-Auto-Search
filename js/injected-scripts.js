@@ -56,12 +56,14 @@ export function createDashboardActivityScript(
 					rect.top < window.innerHeight && rect.bottom > 0 &&
 					rect.left < window.innerWidth && rect.right > 0;
 			};
-				const isDone = (el) => {
+			const isDone = (el) => {
 				const txt = textOf(el).toLowerCase();
 				if (/completed|not eligible|earned last month|already done|claimed|you did it|đã hoàn thành|đã nhận|đã hoàn tất|đã xong|không đủ điều kiện/i.test(txt)) return true;
-					const className = String(el?.className || '').toLowerCase();
-					if (/(?:^|[\\s_-])(completed|done|checked|finished)(?:$|[\\s_-])/.test(className)) return true;
-					return Boolean(el?.querySelector?.('svg[data-icon="checkmark"], svg[class*="check"], [data-icon="completed"], [class*="mee-completed"]'));
+				// Probe only this card/control. Parent containers include siblings,
+				// whose ticks must not mark an unfinished card as completed.
+				const className = String(el?.className || '').toLowerCase();
+				if (/(?:^|[\\s_-])(complete|completed|done|checked|finished)(?:$|[\\s_-])/.test(className)) return true;
+				return Boolean(el?.querySelector?.('svg[data-icon="checkmark"], svg[class*="check"], [data-icon="completed"], [class*="mee-completed"]'));
 			};
 			const headingNodes = Array.from(mainRoot.querySelectorAll('h1, h2, h3, h4, [role="heading"], div, span, p'))
 				.filter(isVisible)
@@ -104,6 +106,7 @@ export function createDashboardActivityScript(
 						openedKeys,
 						retry: true,
 						reason: 'scrolled while looking for Daily set',
+						scanPosition: window.scrollY,
 						url: location.href,
 						title: document.title
 					};
@@ -347,6 +350,7 @@ export function createDashboardActivityScript(
 				openedKeys,
 				pressPoint,
 				safetyLimit,
+				scanPosition: window.scrollY,
 				url: location.href,
 				title: document.title
 			};
@@ -354,7 +358,11 @@ export function createDashboardActivityScript(
 	`;
 }
 
-export function createEarnActivityScript(visitedKeys, safetyLimit = 12) {
+export function createEarnActivityScript(
+  visitedKeys,
+  safetyLimit = 12,
+  deferToCdp = false,
+) {
   return `
 		(function() {
 			const clicked = [];
@@ -362,6 +370,8 @@ export function createEarnActivityScript(visitedKeys, safetyLimit = 12) {
 			const openedKeys = [];
 			const visited = new Set(${JSON.stringify(visitedKeys || [])});
 			const seen = new Set();
+			let pressPoint = null;
+			const deferToCdp = ${Boolean(deferToCdp)};
 			const safetyLimit = ${Number(safetyLimit) || 12};
 			const normalize = (value) => (value || '').normalize('NFC').replace(/\\s+/g, ' ').trim();
 			const mainRoot = document.querySelector('main') || document.body;
@@ -409,10 +419,10 @@ export function createEarnActivityScript(visitedKeys, safetyLimit = 12) {
 						String(node.className || '')
 					].filter(Boolean).join(' ')));
 				if (lockProbe) return 'required or locked';
-					const className = String(el?.className || '').toLowerCase();
-					if (/(?:^|[\\s_-])(locked|required)(?:$|[\\s_-])/.test(className)) return 'required or locked';
-					if (/(?:^|[\\s_-])(completed|done|checked|finished)(?:$|[\\s_-])/.test(className)) return 'already completed';
-					if (el.querySelector?.('svg[data-icon="checkmark"], svg[class*="check"], [data-icon="completed"], [class*="mee-completed"]')) return 'already completed';
+				const className = String(el?.className || '').toLowerCase();
+				if (/(?:^|[\\s_-])(locked|required)(?:$|[\\s_-])/.test(className)) return 'required or locked';
+				if (/(?:^|[\\s_-])(complete|completed|done|checked|finished)(?:$|[\\s_-])/.test(className)) return 'already completed';
+				if (el.querySelector?.('svg[data-icon="checkmark"], svg[class*="check"], [data-icon="completed"], [class*="mee-completed"]')) return 'already completed';
 				return '';
 			};
 			const markerNodes = Array.from(mainRoot.querySelectorAll('h1, h2, h3, [role="heading"], div, span, p'))
@@ -445,6 +455,7 @@ export function createEarnActivityScript(visitedKeys, safetyLimit = 12) {
 					skipped,
 					openedKeys,
 					retry: canScroll,
+					scanPosition: window.scrollY,
 					reason: canScroll ?
 						'scrolled while looking for Keep earning' :
 						'keep earning heading not found',
@@ -546,6 +557,10 @@ export function createEarnActivityScript(visitedKeys, safetyLimit = 12) {
 					.find((point) => point.element && (target.contains(point.element) || target === point.element));
 				if (!hit) return false;
 				const { x, y, element: eventTarget } = hit;
+				if (deferToCdp) {
+					pressPoint = { x, y };
+					return true;
+				}
 				try {
 					target.focus?.({ preventScroll: true });
 				} catch (error) {}
@@ -689,6 +704,7 @@ export function createEarnActivityScript(visitedKeys, safetyLimit = 12) {
 						openedKeys,
 						retry: true,
 						reason: 'scrolled for more earn cards',
+						scanPosition: window.scrollY,
 						url: location.href,
 						title: document.title
 					};
@@ -705,49 +721,14 @@ export function createEarnActivityScript(visitedKeys, safetyLimit = 12) {
 				clicked,
 				skipped,
 				openedKeys,
+				pressPoint,
+				scanPosition: window.scrollY,
 				safetyLimit,
 				url: location.href,
 				title: document.title
 			};
 		})()
 	`;
-}
-
-// Check the clicked card itself after returning to Rewards. A sibling's tick
-// must never confirm this card, and opening a tab alone does not confirm points.
-export function createActivityCompletionScript(items) {
-  return `(() => {
-    const items = ${JSON.stringify(items || [])};
-    const completed = [];
-    const normalize = value => (value || '').replace(/\\s+/g, ' ').trim();
-    const done = el => /completed|already done|claimed|you did it|đã hoàn thành|đã nhận|đã xong/i.test(normalize(el.innerText || el.textContent)) ||
-      Boolean(el.querySelector?.('svg[data-icon="checkmark"], svg[class*="check"], [data-icon="completed"], [class*="mee-completed"]'));
-    for (const item of items) {
-      const label = normalize(item.text).slice(0, 40);
-      if (!label) continue;
-      for (const anchor of document.querySelectorAll('a[href], button, [role="button"]')) {
-        const href = anchor.href || anchor.closest?.('a[href]')?.href || '';
-        if (href ? href !== item.key : !normalize(anchor.innerText || anchor.textContent).includes(label)) continue;
-        let node = anchor;
-        for (let depth = 0; node && depth < 5; depth++, node = node.parentElement) {
-          if (node.matches('main, section, body')) break;
-          const links = new Set(Array.from(node.querySelectorAll('a[href]'), a => a.href));
-          if (links.size > 1) break;
-          const hasSiblingAction = Array.from(node.querySelectorAll('a[href], button, [role="button"]'))
-            .some(target => target !== anchor && !target.contains(anchor) && !anchor.contains(target));
-          if (hasSiblingAction) break;
-          const text = normalize(node.innerText || node.textContent);
-          if (text.length > 520) break;
-          if (text.includes(label) && done(node)) {
-            completed.push(item.key);
-            break;
-          }
-        }
-        if (completed.includes(item.key)) break;
-      }
-    }
-    return { completedKeys: [...new Set(completed)] };
-  })()`;
 }
 
 export function createSolveActivityScript() {
